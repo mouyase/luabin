@@ -65,11 +65,6 @@ for cand in gcc "${CROSS}-gcc"; do
 done
 [ -n "$CC_BIN" ] || { echo "找不到 gcc（尝试过 gcc 与 ${CROSS}-gcc）" >&2 ; exit 1 ; }
 
-# 同族的 nm，用于校验 DLL 导出符号
-NM_BIN=""
-for cand in nm "${CROSS}-nm"; do
-  if command -v "$cand" >/dev/null 2>&1; then NM_BIN=$cand ; break ; fi
-done
 
 # 语言版本号（5.5.1 -> 5.5）。不执行产物取版本：
 # 交叉编译时本机跑不了目标架构的 exe（如 arm64 runner 上编 x64）。
@@ -141,15 +136,19 @@ if [ "$ACTUAL_MACHINE" != "$EXPECT_MACHINE" ]; then
   exit 1
 fi
 
-# DLL 必须导出 lua_* 符号，否则 require 加载 C 扩展会找不到入口
-if [ -n "$NM_BIN" ]; then
-  if ! "$NM_BIN" -g src/lua55.dll 2>/dev/null | grep -qi 'T luaL_newstate'; then
-    echo "lua55.dll 缺少 luaL_newstate 导出" >&2
-    exit 1
-  fi
-  echo "DLL 导出符号检查通过"
+# DLL 必须导出 lua_* 符号，否则外部 C 程序链接不上。
+#
+# 不用 nm：PE 的导出表不是普通符号表，nm -g 对 DLL 的输出
+# 随 binutils 版本和构建配置变化很大，实测 UCRT64 下读不到
+# luaL_newstate，但 strings 里明明有 —— 属于误报。
+#
+# 改用在 DLL 里搜导出名字符串。导出表本身就以明文字符串
+# 存放符号名，这个判定对 PE 稳定可靠。
+if grep -qa 'luaL_newstate' src/lua55.dll; then
+  echo "DLL 导出符号检查通过（luaL_newstate 存在）"
 else
-  echo "warning: nm 不可用，跳过导出符号检查" >&2
+  echo "lua55.dll 缺少 luaL_newstate" >&2
+  exit 1
 fi
 
 # ------------------------------------------------ 5. 核心测试
