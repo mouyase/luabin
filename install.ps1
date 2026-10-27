@@ -21,6 +21,17 @@ $LuabinVersion = if ($env:LUABIN_VERSION) { $env:LUABIN_VERSION } else { '5.5.1'
 $LuabinRepo    = if ($env:LUABIN_REPO)    { $env:LUABIN_REPO }    else { 'mouyase/luabin' }
 $Prefix        = if ($env:LUABIN_PREFIX)  { $env:LUABIN_PREFIX }  else { "$env:LOCALAPPDATA\Programs\Lua\$LuabinVersion" }
 $Force         = $env:LUABIN_FORCE -eq '1'
+$Mirror        = $env:LUABIN_MIRROR
+
+# GitHub 在部分地区直连不通（实测 raw.githubusercontent.com 与
+# github.com 都会直接断流，报 unexpected EOF）。
+# 这里按顺序试：用户指定镜像 → 官方 → 第三方代理。
+# 无论走哪条，最终都用官方 .sha256 校验，内容被篡改会立刻暴露。
+$MirrorPrefixes = @()
+if ($Mirror) { $MirrorPrefixes += $Mirror.TrimEnd('/') + '/' }
+$MirrorPrefixes += ''
+$MirrorPrefixes += 'https://ghfast.top'
+$MirrorPrefixes += 'https://gh-proxy.com'
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-Info($msg) { Write-Host "    $msg" }
@@ -64,31 +75,97 @@ New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 
 try {
     $zipPath = Join-Path $tmp $fileName
-    try {
-        Invoke-WebRequest -Uri "$baseUrl/$fileName" -OutFile $zipPath -UseBasicParsing
-    } catch {
-        Fail "下载失败。确认版本 $LuabinVersion 已发布: https://github.com/$LuabinRepo/releases"
+    $shaPath = "$zipPath.sha256"
+
+    # 逐个前缀尝试。镜像前缀直接拼在原 URL 前面，
+    # 形如 https://ghfast.top/https://github.com/...（代理的标准用法）。
+    #
+    # 用 System.Net.Http.HttpClient 而不是 Invoke-WebRequest：
+    # 后者在部分网络故障下 TimeoutSec 不生效（实测连 127.0.0.1:9
+    # 会无限挂住），而 HttpClient 的 Timeout 是硬超时。
+    $downloaded = $false
+    $usedPrefix = $null
+
+    Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
+
+    foreach ($pfx in $MirrorPrefixes) {
+        $label = if ($pfx) { $pfx } else { '直连' }
+        $url = if ($pfx) { "$pfx/$baseUrl/$fileName" } else { "$baseUrl/$fileName" }
+        Write-Info "尝试 [$label]"
+
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $handler.AllowAutoRedirect = $true
+        $client = New-Object System.Net.Http.HttpClient($handler)
+        # 硬超时：连接与整体下载都受它约束
+        $client.Timeout = [TimeSpan]::FromSeconds(90)
+        try {
+            $resp = $client.GetAsync($url, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+            if (-not $resp.IsSuccessStatusCode) {
+                throw "HTTP $([int]$resp.StatusCode)"
+            }
+            $fs = [System.IO.File]::Create($zipPath)
+            try {
+                $resp.Content.CopyToAsync($fs).GetAwaiter().GetResult()
+            } finally { $fs.Dispose(); $resp.Dispose() }
+            if ((Get-Item $zipPath).Length -lt 10240) {
+                throw "文件过小（$((Get-Item $zipPath).Length) 字节），可能是错误页"
+            }
+            $downloaded = $true
+            $usedPrefix = $pfx
+            Write-Info "下载成功（$label）"
+            break
+        } catch {
+            $reason = $_.Exception.Message
+            if ($_.Exception.InnerException) { $reason = $_.Exception.InnerException.Message }
+            Write-Info "失败: $reason"
+            if (Test-Path $zipPath) { Remove-Item $zipPath -Force -ErrorAction SilentlyContinue }
+        } finally {
+            $client.Dispose()
+            $handler.Dispose()
+        }
     }
+
+    if (-not $downloaded) {
+        Fail @"
+下载失败。所有通道都不可用：
+  $($MirrorPrefixes | ForEach-Object { if ($_) { $_ } else { '直连' } } | Join-String -Separator ' / ')
+
+排查办法：
+  1. 手动下载后解压到 $Prefix
+     https://github.com/$LuabinRepo/releases/download/v$LuabinVersion/$fileName
+  2. 或用 gh 命令行：gh release download v$LuabinVersion -R $LuabinRepo
+  3. 或指定可用镜像：`$env:LUABIN_MIRROR='https://your-proxy'; irm ... | iex
+"@
+    }
+
     Write-Info "已下载 $([math]::Round((Get-Item $zipPath).Length / 1KB, 1)) KB"
 
     # sha256 校验
+    # sha256 文件必须从下载成功的同一通道取，否则代理不可用时
+    # 校验环节又会失败一次。
+    #
     # 注意：不能把"校验失败就退出"塞进 try/catch 里，
     # 外层 catch 会把失败原因吞掉，最后只剩一句"跳过校验"。
     # 分成两步：先尝试取 .sha256 文件（失败可容忍），
     # 取到了就必须校验通过。
-    $shaUrl = "$baseUrl/$fileName.sha256"
     $shaText = $null
-    try {
-        $shaText = (Invoke-WebRequest -Uri $shaUrl -UseBasicParsing).Content
-    } catch {
-        $shaText = $null
+    foreach ($pfx in @($usedPrefix) + $MirrorPrefixes) {
+        $url = if ($pfx) { "$pfx/$baseUrl/$fileName.sha256" } else { "$baseUrl/$fileName.sha256" }
+        $h2 = New-Object System.Net.Http.HttpClientHandler
+        $c2 = New-Object System.Net.Http.HttpClient($h2)
+        $c2.Timeout = [TimeSpan]::FromSeconds(20)
+        try {
+            $t = $c2.GetStringAsync($url).GetAwaiter().GetResult()
+            if ($t) { $shaText = $t.Trim(); break }
+        } catch { $shaText = $null }
+        finally { $c2.Dispose(); $h2.Dispose() }
     }
 
     if ($shaText) {
         $expected = ($shaText -split '\s+')[0].Trim().ToLower()
         $actual = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
         if ($expected -ne $actual) {
-            Fail "sha256 校验失败`n  期望: $expected`n  实际: $actual"
+            Fail "sha256 校验失败，下载内容可能被篡改`n  期望: $expected`n  实际: $actual"
         }
         Write-Info 'sha256 校验通过'
     } else {

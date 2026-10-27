@@ -27,6 +27,27 @@ LUABIN_VERSION="${LUABIN_VERSION:-${1:-5.5.1}}"
 PREFIX="${PREFIX:-$HOME/.local}"
 LUABIN_REPO="${LUABIN_REPO:-mouyase/luabin}"
 LUABIN_FORCE="${LUABIN_FORCE:-0}"
+LUABIN_MIRROR="${LUABIN_MIRROR:-}"
+
+# GitHub 在部分地区直连不通（raw.githubusercontent.com 与 github.com
+# 都可能直接断流）。按顺序试：用户指定镜像 → 官方 → 第三方代理。
+# 镜像前缀直接拼在原 URL 前面，是这类代理的标准用法。
+# 无论走哪条通道，最终都用官方 .sha256 校验，内容被改会立刻暴露。
+#
+# 尝试顺序：用户指定镜像（若有）→ 直连 → 内置代理
+# 直连用 @DIRECT 占位：空串放进列表会被字段分割吃掉，
+# "直连"这一项就静默消失了（实测踩过）。
+if [ -n "$LUABIN_MIRROR" ]; then
+  # 用户指定的镜像排最前，其余照旧；若它恰好等于内置代理则去重
+  _USER_MIRROR="${LUABIN_MIRROR%/}"
+  MIRROR_ORDER="$_USER_MIRROR @DIRECT"
+  for _p in https://ghfast.top https://gh-proxy.com; do
+    [ "$_p" = "$_USER_MIRROR" ] || MIRROR_ORDER="$MIRROR_ORDER $_p"
+  done
+  unset _USER_MIRROR _p
+else
+  MIRROR_ORDER="@DIRECT https://ghfast.top https://gh-proxy.com"
+fi
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
@@ -108,13 +129,60 @@ else
   CURL_PROGRESS="-sS"
 fi
 
-curl -fSL $CURL_PROGRESS -o "$TMP/$FILENAME" "$BASE/$FILENAME" \
-  || die "下载失败。确认版本 ${LUABIN_VERSION} 已发布：https://github.com/${LUABIN_REPO}/releases
-  也可手动下载后解压到 $PREFIX：
-  $BASE/$FILENAME"
+# 逐个通道尝试。
+# 空串代表直连，用 @DIRECT 占位再还原——直接放空串在列表里会被
+# 字段分割吃掉，"直连"这一项就消失了（实测踩过）。
+USED_PREFIX=""
+DOWNLOADED=0
+for token in $MIRROR_ORDER; do
+  if [ "$token" = "@DIRECT" ]; then
+    pfx=""
+    url="$BASE/$FILENAME"
+    # 变量值保持 ASCII：macOS 自带 bash 3.2 在 set -u 下处理
+    # 多字节字符串会误报 unbound variable（实测 label 取中文值即崩）。
+    label="direct"
+  else
+    pfx="$token"
+    url="$pfx/$BASE/$FILENAME"
+    label="$pfx"
+  fi
+  info "尝试 [$label]"
+  if curl -fL $CURL_PROGRESS --connect-timeout 15 --max-time 300 \
+       -o "$TMP/$FILENAME" "$url" 2>/dev/null; then
+    if [ -s "$TMP/$FILENAME" ] && [ "$(wc -c < "$TMP/$FILENAME")" -gt 10240 ]; then
+      USED_PREFIX="$pfx"
+      DOWNLOADED=1
+      info "下载成功（${label}）"
+      break
+    fi
+    info "失败: 文件过小，可能是错误页"
+  else
+    info "失败"
+  fi
+  rm -f "$TMP/$FILENAME"
+done
+
+[ "$DOWNLOADED" = "1" ] || die "下载失败，所有通道都不可用。
+
+  排查办法：
+    1. 手动下载后解压到 $PREFIX
+       $BASE/$FILENAME
+    2. 或用 gh 命令行
+       gh release download v${LUABIN_VERSION} -R ${LUABIN_REPO}
+    3. 或指定可用镜像
+       LUABIN_MIRROR=https://your-proxy sh install.sh"
 
 # 校验 sha256（Release 里同时提供 .sha256 文件）
-if curl -fsSL -o "$TMP/$FILENAME.sha256" "$BASE/$FILENAME.sha256" 2>/dev/null; then
+# 从下载成功的通道取，失败再退回直连
+if [ -n "$USED_PREFIX" ]; then
+  SHA_URL="$USED_PREFIX/$BASE/$FILENAME.sha256"
+else
+  SHA_URL="$BASE/$FILENAME.sha256"
+fi
+if ! curl -fsSL --connect-timeout 15 --max-time 60 -o "$TMP/$FILENAME.sha256" "$SHA_URL" 2>/dev/null; then
+  curl -fsSL --connect-timeout 15 --max-time 60 -o "$TMP/$FILENAME.sha256" "$BASE/$FILENAME.sha256" 2>/dev/null || true
+fi
+if [ -s "$TMP/$FILENAME.sha256" ]; then
   EXPECTED=$(cut -d' ' -f1 < "$TMP/$FILENAME.sha256")
   ACTUAL=$(shasum -a 256 "$TMP/$FILENAME" | cut -d' ' -f1)
   if [ "$EXPECTED" != "$ACTUAL" ]; then

@@ -24,6 +24,12 @@ curl -fsSL https://raw.githubusercontent.com/mouyase/luabin/main/install.sh | sh
 irm https://raw.githubusercontent.com/mouyase/luabin/main/install.ps1 | iex
 ```
 
+> 如果直连 GitHub 不通（报 `unexpected EOF`、`0 bytes from the transport stream`），
+> 两个脚本都会自动按「直连 → ghfast.top → gh-proxy.com」顺序重试。
+> 也可手动指定镜像：`$env:LUABIN_MIRROR='https://你的代理'`（Windows）或
+> `LUABIN_MIRROR=https://你的代理 sh install.sh`（macOS）。
+> 无论走哪条通道，最终都用官方 `.sha256` 校验。
+
 装到 `%LOCALAPPDATA%\Programs\Lua\5.5.1`，写用户级 `PATH`，不需要管理员权限。
 
 或从 Releases 下 `.zip` 解压，或下 `-setup.exe` 走安装向导（可装到 `Program Files`，可关联 `.lua` 文件）。
@@ -37,6 +43,27 @@ curl -fsSL https://raw.githubusercontent.com/mouyase/luabin/main/scripts/build-l
 ```
 
 约 30 秒。装到 `~/.local`，可用 `PREFIX` 环境变量改。
+
+## 网络受限地区
+
+`raw.githubusercontent.com` 和 `github.com` 在部分地区会直接断流（不是慢，是报
+`unexpected EOF or 0 bytes from the transport stream`，PowerShell 和 curl 都一样）。
+
+两个安装脚本内置了通道回退：
+
+```
+直连 → https://ghfast.top → https://gh-proxy.com
+```
+
+镜像前缀直接拼在原 URL 前面（`https://ghfast.top/https://github.com/...`），
+这是这类代理的标准用法。可用 `LUABIN_MIRROR` 环境变量插到最前面。
+
+**安全性**：不管走哪条通道，下载完都会拿官方 Release 的 `.sha256` 强校验，
+内容被代理改动会立刻失败退出。实测过经代理下载的二进制哈希与官方完全一致。
+
+Windows 侧用 `System.Net.Http.HttpClient` 而不是 `Invoke-WebRequest`：
+后者在部分网络故障下 `TimeoutSec` 不生效（连不可路由地址会无限挂住），
+`HttpClient.Timeout` 是硬超时，实测设 6 秒即 6.1 秒返回。
 
 ## 为什么 Linux 不给二进制
 
