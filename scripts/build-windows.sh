@@ -143,6 +143,19 @@ else
   # 外层再传 AR/RANLIB 会和它打架，产出错架构或空 DLL。
   make mingw CC="$CC_BIN"
 
+  # 5.1 的 mingw recipe 最后一行是 `make "LUAC_T=luac.exe" luac.exe`，
+  # 但 5.1 的 Makefile 里没有名为 luac.exe 的目标（只有 $(LUAC_T)），
+  # 所以 luac 根本没被编出来，且 make 不会报错。
+  #
+  # 手动补一步：直接请求 $(LUAC_T)，即 luac。
+  if [ "$MAJOR" = "51" ] && [ ! -f "src/luac" ]; then
+    echo "5.1 的 mingw 没产出 luac，手动补编"
+    make -C src "LUAC_T=luac" luac CC="$CC_BIN" || {
+      echo "luac 编译失败" >&2
+      exit 1
+    }
+  fi
+
   LUA_EXE="${PWD}/src/lua.exe"
 
   # luac 的产物名各版本不同：
