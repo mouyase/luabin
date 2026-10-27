@@ -401,6 +401,7 @@ jobs:
           set -eu
           V="${{ needs.setup.outputs.version }}"
           REPO="${GITHUB_REPOSITORY}"
+          DL="https://github.com/${REPO}/releases/download/v${V}"
 
           # heredoc 内容带 YAML 的十空格缩进，写完要剥掉，
           # 否则 Markdown 会把行首四空格当缩进代码块。
@@ -410,21 +411,24 @@ jobs:
 
           从 [lua.org](https://www.lua.org/ftp/) 官方源码构建。覆盖 Lua 5.0 到 5.5 全部发布版本。
 
-          ### 下载哪个
+          ### 下载
 
-          | 系统 | 架构 | 文件 |
-          |---|---|---|
-          | macOS | Apple Silicon | `lua-__VERSION__-macos-arm64.tar.gz` 或 `.pkg` |
-          | macOS | Intel | `lua-__VERSION__-macos-x64.tar.gz` 或 `.pkg` |
-          | Windows | x64 | `lua-__VERSION__-windows-x64.zip` 或 `-setup.exe` |
-          | Windows | ARM64 | `lua-__VERSION__-windows-arm64.zip` 或 `-setup.exe` |
-          | Linux | 任意 | 见下方「Linux」，无预编译包 |
+          「绿色版」解压即用，不写注册表、不装到系统目录，删掉文件夹就卸载干净。
+          「安装包」走系统安装流程，会注册到「应用与功能」并写入 PATH。
 
-          `.tar.gz` 和 `.zip` 解压即用，`bin/` 里就是解释器。`.pkg` 装到 `/usr/local`，`-setup.exe` 走安装向导。
+          | 系统 | 架构 | 绿色版 | 安装包 |
+          |---|---|---|---|
+          | macOS | Apple Silicon | [.tar.gz](__DL__/lua-__VERSION__-macos-arm64.tar.gz) | [.pkg](__DL__/lua-__VERSION__-macos-arm64.pkg) |
+          | macOS | Intel | [.tar.gz](__DL__/lua-__VERSION__-macos-x64.tar.gz) | [.pkg](__DL__/lua-__VERSION__-macos-x64.pkg) |
+          | Windows | x64 | [.zip](__DL__/lua-__VERSION__-windows-x64.zip) | [.exe](__DL__/lua-__VERSION__-windows-x64-setup.exe) |
+          | Windows | ARM64 | [.zip](__DL__/lua-__VERSION__-windows-arm64.zip) | [.exe](__DL__/lua-__VERSION__-windows-arm64-setup.exe) |
+          | Linux | 任意 | 现场编译，见下方 | 无 |
 
           不确定自己的架构，macOS 看左上角苹果菜单 →「关于本机」，Windows 看「设置 → 系统 → 系统信息」。
 
           ### 一键安装
+
+          不想手动选文件的话。
 
           macOS
 
@@ -448,14 +452,14 @@ jobs:
 
           ### 说明
 
-          `.pkg` 和 `-setup.exe` 都没签名。macOS 上浏览器下载会被 Gatekeeper 拦截，用安装脚本可避免，因为 curl 下载不带 quarantine 标记。Windows 会弹 SmartScreen，点「更多信息 → 仍要运行」。
+          `.pkg` 和 `-setup.exe` 都没签名。macOS 上浏览器下载会被 Gatekeeper 拦截，用上面的安装脚本可避免，因为 curl 下载不带 quarantine 标记。Windows 会弹 SmartScreen，点「更多信息 → 仍要运行」。
 
-          每个文件附 `.sha256`，另有汇总的 `SHA256SUMS.txt`。GitHub 直连不通时脚本会自动走镜像，详见 [README](https://github.com/__REPO__#readme)。
+          每个文件附 `.sha256`，另有汇总的 [`SHA256SUMS.txt`](__DL__/SHA256SUMS.txt)。GitHub 直连不通时脚本会自动走镜像，详见 [README](https://github.com/__REPO__#readme)。
           EOF
 
           sed 's/^          //' notes.raw > notes.md
           rm -f notes.raw
-          sed "s|__VERSION__|${V}|g; s|__REPO__|${REPO}|g" notes.md > notes.tmp
+          sed "s|__VERSION__|${V}|g; s|__REPO__|${REPO}|g; s|__DL__|${DL}|g" notes.md > notes.tmp
           mv notes.tmp notes.md
 
           echo "=== notes.md ==="
