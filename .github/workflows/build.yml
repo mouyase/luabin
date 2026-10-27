@@ -402,32 +402,37 @@ jobs:
           V="${{ needs.setup.outputs.version }}"
           REPO="${GITHUB_REPOSITORY}"
 
-          # 用 heredoc 写 Markdown 时必须处理缩进：
-          # YAML 的 | 块标量要求内容整体缩进，而 heredoc 会把这些
-          # 前导空格原样写进 notes.md。Markdown 里行首四个空格
-          # 就是缩进代码块，整篇说明会渲染错。
-          #
-          # 解法是缩进写、写完剥掉公共前导空格。
+          # heredoc 内容带 YAML 的十空格缩进，写完要剥掉，
+          # 否则 Markdown 会把行首四空格当缩进代码块。
+          # 用占位符避开 shell 变量与 Markdown 反引号的互相干扰。
           cat > notes.raw <<'EOF'
           ## Lua __VERSION__
 
-          从 [lua.org](https://www.lua.org/ftp/) 官方源码构建，覆盖 5.0 到 5.5 全部发布版本。
+          从 [lua.org](https://www.lua.org/ftp/) 官方源码构建。覆盖 Lua 5.0 到 5.5 全部发布版本。
 
-          ### macOS
+          ### 下载哪个
 
-          `.tar.gz` 解压即用，`.pkg` 安装到 `/usr/local`。
+          | 系统 | 架构 | 文件 |
+          |---|---|---|
+          | macOS | Apple Silicon | `lua-__VERSION__-macos-arm64.tar.gz` 或 `.pkg` |
+          | macOS | Intel | `lua-__VERSION__-macos-x64.tar.gz` 或 `.pkg` |
+          | Windows | x64 | `lua-__VERSION__-windows-x64.zip` 或 `-setup.exe` |
+          | Windows | ARM64 | `lua-__VERSION__-windows-arm64.zip` 或 `-setup.exe` |
+          | Linux | 任意 | 见下方「Linux」，无预编译包 |
 
-          一键安装：
+          `.tar.gz` 和 `.zip` 解压即用，`bin/` 里就是解释器。`.pkg` 装到 `/usr/local`，`-setup.exe` 走安装向导。
+
+          不确定自己的架构，macOS 看左上角苹果菜单 →「关于本机」，Windows 看「设置 → 系统 → 系统信息」。
+
+          ### 一键安装
+
+          macOS
 
           ```sh
           curl -fsSL https://raw.githubusercontent.com/__REPO__/main/install.sh | sh -s __VERSION__
           ```
 
-          ### Windows
-
-          `.zip` 解压即用，`-setup.exe` 走安装向导。
-
-          一键安装：
+          Windows
 
           ```powershell
           $env:LUABIN_VERSION='__VERSION__'; irm https://raw.githubusercontent.com/__REPO__/main/install.ps1 | iex
@@ -435,7 +440,7 @@ jobs:
 
           ### Linux
 
-          不发预编译包，现场编译，约 30 秒。
+          不发预编译包。glibc 符号版本化会让预编译产物在老发行版上起不来，musl 静态版又会废掉 `dlopen`，`require` 加载 C 扩展全部失效。现场编译约 30 秒。
 
           ```sh
           curl -fsSL https://raw.githubusercontent.com/__REPO__/main/scripts/build-linux.sh | sh -s __VERSION__
@@ -443,23 +448,18 @@ jobs:
 
           ### 说明
 
-          `.pkg` 和 `-setup.exe` 都没签名。macOS 上浏览器下载会被 Gatekeeper 拦截，用安装脚本可避免（curl 不带 quarantine 标记）。Windows 会弹 SmartScreen，点「更多信息 → 仍要运行」。
+          `.pkg` 和 `-setup.exe` 都没签名。macOS 上浏览器下载会被 Gatekeeper 拦截，用安装脚本可避免，因为 curl 下载不带 quarantine 标记。Windows 会弹 SmartScreen，点「更多信息 → 仍要运行」。
 
           每个文件附 `.sha256`，另有汇总的 `SHA256SUMS.txt`。GitHub 直连不通时脚本会自动走镜像，详见 [README](https://github.com/__REPO__#readme)。
           EOF
 
-          # 剥掉公共的 10 空格缩进（heredoc 在 YAML 里的缩进量）
           sed 's/^          //' notes.raw > notes.md
           rm -f notes.raw
-
-          # 占位符替换成实际值。
-          # 不用 sed -i：BSD sed（macOS）和 GNU sed 的参数不同。
-          # 这里用临时文件，两边都能跑。
           sed "s|__VERSION__|${V}|g; s|__REPO__|${REPO}|g" notes.md > notes.tmp
           mv notes.tmp notes.md
 
-          echo "=== notes.md 前 12 行 ==="
-          head -12 notes.md
+          echo "=== notes.md ==="
+          cat notes.md
 
       - uses: softprops/action-gh-release@v3
         with:
