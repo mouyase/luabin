@@ -132,7 +132,9 @@ if command -v sha256sum >/dev/null 2>&1; then
   info "sha256: $(sha256sum "${PKG}.tar.gz" | cut -d' ' -f1)"
 fi
 
-tar zxf "${PKG}.tar.gz"
+# 5.0.x 的包里 test/lua -> ../bin/lua 这类符号链接，解包时目标不存在，
+# tar 会报错退出。容忍它。
+tar zxf "${PKG}.tar.gz" || echo "tar 有警告（符号链接），继续" >&2
 cd "$PKG"
 
 # ------------------------------------------------ 编译
@@ -171,21 +173,31 @@ else
   #   有 readline 且是旧版  → linux（目标本身已经带上）
   #   无 readline 且是 5.5  → linux（不链，运行时尝试）
   #   无 readline 且是旧版  → generic + 手动定宏
-  if [ "$MAJOR" = "55" ]; then
-    if [ "$HAVE_RL" = "1" ]; then
-      MAKE_TARGET=linux-readline
-      make "$MAKE_TARGET" -j"$JOBS"
+  if [ "$HAVE_RL" = "1" ]; then
+    # 有 readline，用官方 linux 目标（5.5 用 linux-readline 才启用行编辑）
+    if [ "$MAJOR" = "55" ]; then
+      make linux-readline -j"$JOBS"
     else
       make linux -j"$JOBS"
     fi
   else
-    if [ "$HAVE_RL" = "1" ]; then
-      make linux -j"$JOBS"
-    else
-      make generic -j"$JOBS" \
-        "SYSCFLAGS=-DLUA_USE_POSIX -DLUA_USE_LINUX -DLUA_USE_DLOPEN" \
-        "SYSLIBS=-Wl,-E -ldl"
-    fi
+    # 没有 readline，必须避开 LUA_USE_LINUX 在旧版本上的副作用。
+    #
+    # luaconf.h 的实际差异：
+    #   5.1 / 5.2 / 5.3   LUA_USE_LINUX 会连带定义 LUA_USE_READLINE
+    #   5.4 / 5.5         只有 POSIX + DLOPEN，不含 readline
+    #
+    # 所以 5.1-5.3 得拆开传 POSIX 和 DLOPEN。
+    case "$MAJOR" in
+      51|52|53)
+        make generic -j"$JOBS" \
+          "SYSCFLAGS=-DLUA_USE_POSIX -DLUA_USE_DLOPEN" \
+          "SYSLIBS=-Wl,-E -ldl"
+        ;;
+      *)
+        make generic -j"$JOBS" "SYSCFLAGS=-DLUA_USE_LINUX" "SYSLIBS=-Wl,-E -ldl"
+        ;;
+    esac
   fi
 fi
 

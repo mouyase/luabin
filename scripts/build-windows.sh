@@ -95,7 +95,9 @@ echo "msystem:  ${MSYSTEM:-unknown}"
 
 # ------------------------------------------------ 3. 编译
 rm -rf "$PKG"
-tar zxf "${PKG}.tar.gz"
+# 5.0.x 的包里有 test/lua -> ../bin/lua 这类符号链接，解包时目标还不存在，
+# tar 会报 "Cannot create symlink" 并以非零码退出。容忍它。
+tar zxf "${PKG}.tar.gz" || echo "tar 有警告（符号链接），继续" >&2
 cd "$PKG"
 
 say "build"

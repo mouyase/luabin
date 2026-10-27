@@ -90,7 +90,9 @@ fi
 echo "sha256: $ACTUAL"
 
 rm -rf "$PKG"
-tar zxf "${PKG}.tar.gz"
+# 5.0.x 的包里 test/lua -> ../bin/lua 这类符号链接，解包时目标还不存在，
+# tar 会打 "Cannot create symlink" 并以非零码退出。容忍它。
+tar zxf "${PKG}.tar.gz" || echo "tar 有警告（符号链接），继续" >&2
 cd "$PKG"
 
 # ------------------------------------------------ 2. 编译
@@ -123,9 +125,16 @@ if [ "$MAJOR" = "50" ]; then
     config
   rm -f config.bak
 
-  if [ "$PLAT" = "macos" ] && [ "$MACHO_ARCH" != "$(uname -m)" ]; then
-    sed -i.bak "s|^MYCFLAGS=.*|MYCFLAGS= -O2 -arch ${MACHO_ARCH}|" config
+  # macOS 上要显式带部署目标，否则产物绑定构建机的系统版本。
+  # 5.0 的 Makefile 不读环境变量 CFLAGS，只能写进 config 的 MYCFLAGS。
+  if [ "$PLAT" = "macos" ]; then
+    MAC_CFLAGS="-O2 -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
+    if [ "$MACHO_ARCH" != "$(uname -m)" ]; then
+      MAC_CFLAGS="$MAC_CFLAGS -arch ${MACHO_ARCH}"
+    fi
+    sed -i.bak "s|^MYCFLAGS=.*|MYCFLAGS= ${MAC_CFLAGS}|" config
     rm -f config.bak
+    echo "MYCFLAGS: ${MAC_CFLAGS}"
   fi
 
   # 5.0 的 src/Makefile 列了 ltests.o，但 ltests.c 需要 LUA_USER_H
@@ -156,13 +165,30 @@ else
   if [ "$PLAT" = "macos" ]; then
     make macosx "$@"
   else
-    # Linux 侧：5.1-5.4 的 linux 目标硬链 -lreadline，精简环境会编不过。
-    # 有 readline 就用 linux，没有就走 generic + 手动定宏。
+    # Linux 侧按版本分别处理 readline 依赖。
+    #
+    # 关键区别在 luaconf.h：
+    #   5.1 / 5.2 / 5.3   LUA_USE_LINUX 会连带定义 LUA_USE_READLINE
+    #   5.4 / 5.5         LUA_USE_LINUX 只有 POSIX + DLOPEN，不含 readline
+    #
+    # 所以 5.1-5.3 想不链 readline，不能传 -DLUA_USE_LINUX，
+    # 得分别传 -DLUA_USE_POSIX 和 -DLUA_USE_DLOPEN。
     if [ -n "${HAVE_READLINE:-}" ]; then
       make linux "$@"
     else
-      make generic "SYSCFLAGS=-DLUA_USE_POSIX -DLUA_USE_LINUX -DLUA_USE_DLOPEN" \
-                   "SYSLIBS=-Wl,-E -ldl"
+      case "$MAJOR" in
+        51|52|53)
+          # 这三个版本的 generic 目标只传 SYSCFLAGS 为空，
+          # 必须显式给 POSIX + DLOPEN，且不能带 LUA_USE_LINUX
+          make generic "SYSCFLAGS=-DLUA_USE_POSIX -DLUA_USE_DLOPEN" \
+                       "SYSLIBS=-Wl,-E -ldl"
+          ;;
+        *)
+          # 5.4+ 的 LUA_USE_LINUX 本来就不含 readline，直接传
+          make generic "SYSCFLAGS=-DLUA_USE_LINUX" \
+                       "SYSLIBS=-Wl,-E -ldl"
+          ;;
+      esac
     fi
   fi
 fi
