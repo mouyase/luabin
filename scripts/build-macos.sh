@@ -191,7 +191,7 @@ cp "$PKG/src/lua.h" "$PKG/src/luaconf.h" "$PKG/src/lualib.h" \
 cp "$PKG/src/liblua.a" "$STAGE/lib/"
 cp "$PKG/doc/readme.html" "$STAGE/README-lua.html"
 # MIT 许可要求随分发附带版权声明
-cp "${SCRIPT_DIR}/../packaging/LICENSE" "$STAGE/LICENSE"
+cp "${SCRIPT_DIR}/../packaging/LICENSE.lua" "$STAGE/LICENSE"
 
 cat > "$STAGE/BUILD-INFO" <<EOF
 lua ${VERSION}
