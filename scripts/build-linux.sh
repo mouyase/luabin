@@ -138,28 +138,87 @@ cd "$PKG"
 # ------------------------------------------------ 编译
 say "编译（$JOBS 并行）"
 
-# 用官方 linux 目标：定义 LUA_USE_LINUX → LUA_USE_POSIX + LUA_USE_DLOPEN，
-# require 能加载 C 扩展。不会硬链 readline：
-# lua.c 里是运行时 dlopen("libreadline.so")，找不到只警告。
-# 没有 readline 时用 linux-readline 会链接失败，所以按检测结果选目标。
-if [ "$HAVE_RL" = "1" ]; then
-  MAKE_TARGET=linux-readline
+# 构建系统在 5.0 到 5.5 之间变过，按版本分档。
+case "$LUA_VERSION" in
+  5.0|5.0.*) MAJOR=50 ;;
+  5.1|5.1.*) MAJOR=51 ;;
+  5.2|5.2.*) MAJOR=52 ;;
+  5.3|5.3.*) MAJOR=53 ;;
+  5.4|5.4.*) MAJOR=54 ;;
+  5.5|5.5.*) MAJOR=55 ;;
+  *) die "不支持的版本: $LUA_VERSION" ;;
+esac
+info "构建系统: $MAJOR 档"
+
+if [ "$MAJOR" = "50" ]; then
+  # 5.0 靠 config 文件，没有 make 平台目标。产物落在 bin/ lib/ include/。
+  sed -i.bak \
+    -e "s|^LOADLIB=.*|LOADLIB= -DUSE_DLOPEN=1|" \
+    -e "s|^DLLIB=.*|DLLIB= -ldl|" \
+    -e "s|^MYLDFLAGS=.*|MYLDFLAGS= -Wl,-E|" \
+    config
+  rm -f config.bak
+  # src/Makefile 列了 ltests.o，但发布包里编不出来，摘掉
+  sed -i.bak '/ltests\.o/d' src/Makefile
+  rm -f src/Makefile.bak
+  make
 else
-  MAKE_TARGET=linux
+  # 5.1+ 用平台目标。
+  #
+  # 5.5 的 linux 目标不硬链 readline（运行时 dlopen），5.1-5.4 会硬链
+  # -lreadline，精简环境里编不过。所以：
+  #   有 readline 且是 5.5  → linux-readline（交互带行编辑）
+  #   有 readline 且是旧版  → linux（目标本身已经带上）
+  #   无 readline 且是 5.5  → linux（不链，运行时尝试）
+  #   无 readline 且是旧版  → generic + 手动定宏
+  if [ "$MAJOR" = "55" ]; then
+    if [ "$HAVE_RL" = "1" ]; then
+      MAKE_TARGET=linux-readline
+      make "$MAKE_TARGET" -j"$JOBS"
+    else
+      make linux -j"$JOBS"
+    fi
+  else
+    if [ "$HAVE_RL" = "1" ]; then
+      make linux -j"$JOBS"
+    else
+      make generic -j"$JOBS" \
+        "SYSCFLAGS=-DLUA_USE_POSIX -DLUA_USE_LINUX -DLUA_USE_DLOPEN" \
+        "SYSLIBS=-Wl,-E -ldl"
+    fi
+  fi
 fi
 
-make "$MAKE_TARGET" -j"$JOBS"
+# ------------------------------------------------ 定位产物
+# 5.0 的产物在 bin/，5.1+ 在 src/
+if [ "$MAJOR" = "50" ]; then
+  LUA_BIN="$PWD/bin/lua"
+  LUAC_BIN="$PWD/bin/luac"
+  INC_DIR="$PWD/include"
+  LIB_DIR="$PWD/lib"
+else
+  LUA_BIN="$PWD/src/lua"
+  LUAC_BIN="$PWD/src/luac"
+  INC_DIR="$PWD/src"
+  LIB_DIR="$PWD/src"
+fi
+
+[ -x "$LUA_BIN" ] || die "没找到 $LUA_BIN"
+[ -x "$LUAC_BIN" ] || die "没找到 $LUAC_BIN"
 
 # ------------------------------------------------ 自检
 say "自检"
-./src/lua -v
-./src/lua -e '
+"$LUA_BIN" -v
+"$LUA_BIN" -e '
   assert(_VERSION == "Lua '"$LUA_LANG"'", "版本不符: " .. tostring(_VERSION))
-  assert(math.maxinteger > 2^62, "缺少 64 位整数")
-  assert(utf8.len("汉字") == 2, "缺少 utf8 库")
+  -- 5.3+ 才有整数子类型和 utf8 库，按版本分支
+  if _VERSION >= "Lua 5.3" then
+    assert(math.maxinteger and math.maxinteger > 2^62, "缺少 64 位整数")
+    assert(utf8 and utf8.len("汉字") == 2, "缺少 utf8 库")
+  end
   local co = coroutine.wrap(function() for i = 1, 3 do coroutine.yield(i * i) end end)
   assert(co() == 1 and co() == 4 and co() == 9, "协程异常")
-  print("自检通过:", _VERSION, math.maxinteger)
+  print("自检通过:", _VERSION)
 '
 
 # ------------------------------------------------ 安装
@@ -167,10 +226,22 @@ say "安装到 $PREFIX"
 
 mkdir -p "$PREFIX/bin" "$PREFIX/include" "$PREFIX/lib" "$PREFIX/share/lua/${LUA_LANG}"
 
-install -m 0755 src/lua  "$PREFIX/bin/lua"
-install -m 0755 src/luac "$PREFIX/bin/luac"
-install -m 0644 src/lua.h src/luaconf.h src/lualib.h src/lauxlib.h src/lua.hpp "$PREFIX/include/"
-install -m 0644 src/liblua.a "$PREFIX/lib/"
+install -m 0755 "$LUA_BIN"  "$PREFIX/bin/lua"
+install -m 0755 "$LUAC_BIN" "$PREFIX/bin/luac"
+
+# 头文件：5.1 的 lua.hpp 在 etc/，其他版本在 src/
+for h in lua.h luaconf.h lualib.h lauxlib.h; do
+  [ -f "$INC_DIR/$h" ] && install -m 0644 "$INC_DIR/$h" "$PREFIX/include/"
+done
+if [ -f "$INC_DIR/lua.hpp" ]; then
+  install -m 0644 "$INC_DIR/lua.hpp" "$PREFIX/include/"
+elif [ -f "$PKG/etc/lua.hpp" ]; then
+  install -m 0644 "$PKG/etc/lua.hpp" "$PREFIX/include/"
+fi
+
+# 静态库：5.0 有两个
+[ -f "$LIB_DIR/liblua.a" ]    && install -m 0644 "$LIB_DIR/liblua.a"    "$PREFIX/lib/"
+[ -f "$LIB_DIR/liblualib.a" ] && install -m 0644 "$LIB_DIR/liblualib.a" "$PREFIX/lib/"
 
 info "已安装:"
 info "  $PREFIX/bin/lua"

@@ -27,6 +27,12 @@
 #ifndef InnoArch
   #define InnoArch "x64compatible"
 #endif
+#ifndef DLLName
+  #define DLLName "lua55.dll"
+#endif
+#ifndef LangVer
+  #define LangVer "5.5"
+#endif
 #ifndef OutDir
   #define OutDir "."
 #endif
@@ -88,10 +94,10 @@ Name: "associate"; Description: "关联 .lua 文件（双击运行脚本）"; Gr
 [Files]
 Source: "{#StageDir}\bin\lua.exe";        DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "{#StageDir}\bin\luac.exe";       DestDir: "{app}\bin"; Flags: ignoreversion
-Source: "{#StageDir}\bin\lua55.dll";      DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "{#StageDir}\bin\{#DLLName}";   DestDir: "{app}\bin"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#StageDir}\include\*";          DestDir: "{app}\include"; Flags: ignoreversion
 Source: "{#StageDir}\lib\*";              DestDir: "{app}\lib"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#StageDir}\share\lua\5.5\*";    DestDir: "{app}\share\lua\5.5"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\share\lua\{#LangVer}\*"; DestDir: "{app}\share\lua\{#LangVer}"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\BUILD-INFO";         DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\README-lua.html";    DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#StageDir}\LICENSE";           DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist

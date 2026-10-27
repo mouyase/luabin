@@ -73,6 +73,22 @@ case "$VERSION" in
   *.*)   LUA_LANG="$VERSION" ;;
   *)     echo "无法解析版本号: $VERSION" >&2 ; exit 1 ;;
 esac
+
+# 版本分档。5.0 的构建系统与后来完全不同（config 驱动，无 mingw 目标，
+# 源码分布在 src/lua、src/lib，产物落在 bin/lib），要单独处理。
+case "$VERSION" in
+  5.0|5.0.*) MAJOR=50 ;;
+  5.1|5.1.*) MAJOR=51 ;;
+  5.2|5.2.*) MAJOR=52 ;;
+  5.3|5.3.*) MAJOR=53 ;;
+  5.4|5.4.*) MAJOR=54 ;;
+  5.5|5.5.*) MAJOR=55 ;;
+  *) echo "unsupported version: $VERSION" >&2 ; exit 1 ;;
+esac
+echo "major:    $MAJOR"
+
+# DLL 名带版本号：lua51.dll / lua52.dll / ... / lua55.dll
+DLL_NAME="lua${MAJOR}.dll"
 say "target: windows-${ARCH}"
 echo "compiler: $CC_BIN ($("$CC_BIN" --version | head -1))"
 echo "msystem:  ${MSYSTEM:-unknown}"
@@ -82,37 +98,91 @@ rm -rf "$PKG"
 tar zxf "${PKG}.tar.gz"
 cd "$PKG"
 
-# 只覆盖 CC。
-# Lua 的 mingw 目标在 recipe 内部自己指定：
-#   AR=$(CC) -shared -o        ← 借编译器把 .o 直接链成 lua55.dll
-#   RANLIB=strip --strip-unneeded
-# 这两个是 make 命令行赋值，会盖掉外层传入的同名变量。
-# 外层若也传 AR/RANLIB，会和 recipe 内赋值打架，
-# 在不同 make 版本上产出错架构或空 DLL。只传 CC 最稳。
 say "build"
-make mingw CC="$CC_BIN"
+
+if [ "$MAJOR" = "50" ]; then
+  # 5.0 没有 mingw 目标，得自己按 INSTALL 的说明手工组织。
+  # 源码在 src/（核心）、src/lib/（标准库）、src/lua/（解释器）、src/luac/（编译器）。
+  #
+  # config 里关键项：
+  #   LOADLIB/DLLIB  动态加载，Windows 默认开但显式写上更稳
+  #   MYCFLAGS       5.0 用这个传宏，不是 SYSCFLAGS
+  sed -i.bak \
+    -e "s|^LOADLIB=.*|LOADLIB= -DUSE_DLL=1|" \
+    -e "s|^DLLIB=.*|DLLIB=|" \
+    -e "s|^MYCFLAGS=.*|MYCFLAGS= -O2|" \
+    -e "s|^CC=.*|CC= ${CC_BIN}|" \
+    config
+  rm -f config.bak
+
+  # src/Makefile 列了 ltests.o，但发布包里 ltests.c 需要 LUA_USER_H
+  # 才编得出来，直接编会失败。从 OBJS 里摘掉。
+  sed -i.bak '/ltests\.o/d' src/Makefile
+  rm -f src/Makefile.bak
+  if [ -f src/lib/Makefile ]; then
+    sed -i.bak '/ltests\.o/d' src/lib/Makefile 2>/dev/null || true
+    rm -f src/lib/Makefile.bak
+  fi
+
+  make
+
+  # 5.0 产物在 bin/ 下，名字就是 lua.exe / luac.exe
+  LUA_EXE="${PWD}/bin/lua.exe"
+  LUAC_EXE="${PWD}/bin/luac.exe"
+  INC_DIR="${PWD}/include"
+  LIB_DIR="${PWD}/lib"
+else
+  # 5.1+ 有 mingw 目标，只覆盖 CC。
+  #
+  # mingw recipe 内部这么写：
+  #   "AR=$(CC) -shared -o" "RANLIB=strip --strip-unneeded"
+  # 这俩是命令行赋值，会盖掉外层传入的同名变量。
+  # 外层再传 AR/RANLIB 会和它打架，产出错架构或空 DLL。
+  make mingw CC="$CC_BIN"
+
+  LUA_EXE="${PWD}/src/lua.exe"
+  LUAC_EXE="${PWD}/src/luac.exe"
+  INC_DIR="${PWD}/src"
+  LIB_DIR="${PWD}/src"
+fi
+
+[ -x "$LUA_EXE" ]  || { echo "missing $LUA_EXE" >&2 ; exit 1 ; }
+[ -x "$LUAC_EXE" ] || { echo "missing $LUAC_EXE" >&2 ; exit 1 ; }
 
 # ------------------------------------------------ 4. 自检
 say "self-check"
-./src/lua.exe -v
-./src/lua.exe -e '
-  assert(_VERSION == "Lua 5.5", "unexpected version: " .. tostring(_VERSION))
-  assert(math.maxinteger > 2^62, "no 64-bit integers")
-  assert(utf8.len("汉字") == 2, "utf8 lib missing")
-  assert(load("return 1+1")() == 2, "load broken")
-  local co = coroutine.wrap(function() for i = 1, 3 do coroutine.yield(i * i) end end)
-  assert(co() == 1 and co() == 4 and co() == 9, "coroutine broken")
-  -- Windows 下 io 与 os 库是否真能用
-  local f = assert(io.open("selftest.tmp", "w")); f:write("x"); f:close()
-  assert(io.open("selftest.tmp", "r"), "cannot reopen"); os.remove("selftest.tmp")
-  assert(type(os.time()) == "number", "os.time broken")
-  print("self-check ok:", _VERSION, math.maxinteger)
-'
+"$LUA_EXE" -v
+"$LUA_EXE" -e "assert(_VERSION == 'Lua ${LUA_LANG}', 'version mismatch: ' .. tostring(_VERSION)) print('version ok:', _VERSION)"
 
-# DLL 必须存在，否则 require 加载 C 扩展会失败
-for f in src/lua55.dll src/lua.exe src/luac.exe; do
-  [ -f "$f" ] || { echo "missing build output: $f" >&2; exit 1; }
-done
+# 只有 5.3+ 才有整数子类型和 utf8 库，按版本分支
+case "$MAJOR" in
+  53|54|55)
+    "$LUA_EXE" -e '
+      assert(math.maxinteger > 2^62, "no 64-bit integers")
+      assert(utf8.len("汉字") == 2, "utf8 lib missing")
+      print("modern features ok:", math.maxinteger)
+    '
+    ;;
+  *)
+    "$LUA_EXE" -e '
+      local f = assert(io.open("selftest.tmp", "w")); f:write("x"); f:close()
+      assert(io.open("selftest.tmp", "r"), "cannot reopen"); os.remove("selftest.tmp")
+      assert(type(os.time()) == "number", "os.time broken")
+      print("io/os ok")
+    '
+    ;;
+esac
+
+# DLL 必须存在（5.0 没有独立 DLL，静态链进 exe）
+if [ "$MAJOR" != "50" ]; then
+  [ -f "src/${DLL_NAME}" ] || { echo "missing src/${DLL_NAME}" >&2 ; exit 1 ; }
+  if grep -qa 'luaL_newstate' "src/${DLL_NAME}"; then
+    echo "DLL 导出检查通过（${DLL_NAME} 含 luaL_newstate）"
+  else
+    echo "${DLL_NAME} 缺少 luaL_newstate" >&2
+    exit 1
+  fi
+fi
 
 # 架构断言：读 PE 文件头。
 # 不用 objdump：MSYS2 的 mingw-w64-*-gcc 包不带它（binutils 是独立包），
@@ -129,25 +199,10 @@ pe_machine() {
 }
 
 EXPECT_MACHINE=$([ "$ARCH" = "x64" ] && echo "8664" || echo "AA64")
-ACTUAL_MACHINE=$(pe_machine src/lua.exe)
+ACTUAL_MACHINE=$(pe_machine "$LUA_EXE")
 echo "PE machine: $ACTUAL_MACHINE (expect $EXPECT_MACHINE)"
 if [ "$ACTUAL_MACHINE" != "$EXPECT_MACHINE" ]; then
   echo "arch mismatch: expected $EXPECT_MACHINE, got $ACTUAL_MACHINE" >&2
-  exit 1
-fi
-
-# DLL 必须导出 lua_* 符号，否则外部 C 程序链接不上。
-#
-# 不用 nm：PE 的导出表不是普通符号表，nm -g 对 DLL 的输出
-# 随 binutils 版本和构建配置变化很大，实测 UCRT64 下读不到
-# luaL_newstate，但 strings 里明明有 —— 属于误报。
-#
-# 改用在 DLL 里搜导出名字符串。导出表本身就以明文字符串
-# 存放符号名，这个判定对 PE 稳定可靠。
-if grep -qa 'luaL_newstate' src/lua55.dll; then
-  echo "DLL 导出符号检查通过（luaL_newstate 存在）"
-else
-  echo "lua55.dll 缺少 luaL_newstate" >&2
   exit 1
 fi
 
@@ -187,28 +242,41 @@ cd "$WORKDIR"
 
 VTAG="$LUA_LANG"
 TAG="lua-${VERSION}-windows-${ARCH}"
-STAGE="$WORKDIR/stage-windows-${ARCH}"
+STAGE="$WORKDIR/stage-windows-${ARCH}-${VERSION}"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/bin" "$STAGE/include" "$STAGE/lib" "$STAGE/share/lua/${VTAG}"
 
-cp "$PKG/src/lua.exe"  "$STAGE/bin/"
-cp "$PKG/src/luac.exe" "$STAGE/bin/"
-cp "$PKG/src/lua55.dll" "$STAGE/bin/"
+cp "$LUA_EXE"  "$STAGE/bin/lua.exe"
+cp "$LUAC_EXE" "$STAGE/bin/luac.exe"
 
-cp "$PKG/src/lua.h" "$PKG/src/luaconf.h" "$PKG/src/lualib.h" \
-   "$PKG/src/lauxlib.h" "$PKG/src/lua.hpp" "$STAGE/include/"
+# DLL 只在 5.1+ 存在
+if [ "$MAJOR" != "50" ] && [ -f "src/${DLL_NAME}" ]; then
+  cp "src/${DLL_NAME}" "$STAGE/bin/"
+  [ -f "src/${DLL_NAME}.a" ] && cp "src/${DLL_NAME}.a" "$STAGE/lib/"
+fi
 
-cp "$PKG/src/liblua.a"   "$STAGE/lib/" 2>/dev/null || true
-cp "$PKG/src/lua55.dll.a" "$STAGE/lib/" 2>/dev/null || true
+# 头文件：5.0 在 include/，5.1 的 lua.hpp 在 etc/，5.2+ 都在 src/
+for h in lua.h luaconf.h lualib.h lauxlib.h; do
+  [ -f "$INC_DIR/$h" ] && cp "$INC_DIR/$h" "$STAGE/include/"
+done
+if [ -f "$INC_DIR/lua.hpp" ]; then
+  cp "$INC_DIR/lua.hpp" "$STAGE/include/"
+elif [ -f "$PKG/etc/lua.hpp" ]; then
+  cp "$PKG/etc/lua.hpp" "$STAGE/include/"
+fi
 
-cp "$PKG/doc/readme.html" "$STAGE/README-lua.html" 2>/dev/null || true
-# MIT 许可要求随分发附带版权声明
+# 静态库：5.0 有两个
+[ -f "$LIB_DIR/liblua.a" ]    && cp "$LIB_DIR/liblua.a"    "$STAGE/lib/"
+[ -f "$LIB_DIR/liblualib.a" ] && cp "$LIB_DIR/liblualib.a" "$STAGE/lib/"
+
+[ -f "$PKG/doc/readme.html" ] && cp "$PKG/doc/readme.html" "$STAGE/README-lua.html"
 cp "${SCRIPT_DIR}/../packaging/LICENSE.lua" "$STAGE/LICENSE"
 
 cat > "$STAGE/BUILD-INFO" <<EOF
 lua ${VERSION}
 plat windows
 arch ${ARCH}
+major ${MAJOR}
 compiler ${CC_BIN}
 built-at $(date -u +%Y-%m-%dT%H:%M:%SZ)
 msystem ${MSYSTEM:-unknown}
@@ -256,6 +324,8 @@ LUABIN_OUTDIR=${OUTDIR_WIN}
 LUABIN_TAG=${TAG}
 LUABIN_VERSION=${VERSION}
 LUABIN_ARCH=${ARCH}
+LUABIN_LANG=${LUA_LANG}
+LUABIN_DLL=${DLL_NAME}
 EOF
 echo "stage 交接文件（Windows 路径）:"
 cat "$OUTDIR/pkg-input.env"

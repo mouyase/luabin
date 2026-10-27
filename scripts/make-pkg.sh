@@ -7,7 +7,7 @@
 #   bin/lua, bin/luac
 #   include/lua*.h
 #   lib/liblua.a
-#   share/lua/5.5/
+#   share/lua/<lang>/
 #
 # 不做签名和公证：下载后会带 com.apple.quarantine，双击被 Gatekeeper 拦。
 # 走 install.sh（curl 下载不带 quarantine）不会有这个问题。
@@ -94,7 +94,7 @@ cat > "$WORK/welcome.html" <<EOF
   <li><code>/usr/local/bin/luac</code> — 字节码编译器</li>
   <li><code>/usr/local/include/</code> — C 头文件</li>
   <li><code>/usr/local/lib/liblua.a</code> — 静态库</li>
-  <li><code>/usr/local/share/lua/5.5/</code> — 纯 Lua 模块目录</li>
+  <li><code>/usr/local/share/lua/${VTAG}/</code> — 纯 Lua 模块目录</li>
 </ul>
 <p>安装后如果 <code>lua</code> 命令找不到，请确认 <code>/usr/local/bin</code> 在 PATH 里。</p>
 </body></html>
