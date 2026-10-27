@@ -101,8 +101,17 @@ say "下载 ${FILENAME}"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-curl -fSL --progress-bar -o "$TMP/$FILENAME" "$BASE/$FILENAME" \
-  || die "下载失败。确认版本 ${LUABIN_VERSION} 已发布：https://github.com/${LUABIN_REPO}/releases"
+# 进度条只在交互终端下开：管道/CI 里 --progress-bar 会刷出大量控制字符
+if [ -t 1 ]; then
+  CURL_PROGRESS="--progress-bar"
+else
+  CURL_PROGRESS="-sS"
+fi
+
+curl -fSL $CURL_PROGRESS -o "$TMP/$FILENAME" "$BASE/$FILENAME" \
+  || die "下载失败。确认版本 ${LUABIN_VERSION} 已发布：https://github.com/${LUABIN_REPO}/releases
+  也可手动下载后解压到 $PREFIX：
+  $BASE/$FILENAME"
 
 # 校验 sha256（Release 里同时提供 .sha256 文件）
 if curl -fsSL -o "$TMP/$FILENAME.sha256" "$BASE/$FILENAME.sha256" 2>/dev/null; then

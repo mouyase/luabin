@@ -354,8 +354,13 @@ jobs:
           mkdir -p out
           # 必须同时收录 .sha256：install.sh / install.ps1 会去 Release 下载
           # <file>.sha256 做校验，只发二进制会导致校验永远失败退化为跳过。
+          #
+          # 注意排除源码包：lua-<version>.tar.gz 与产物 tar.gz 通配相同，
+          # 不排除会把源码也发到 Release 上（实测发生过）。
+          SRC_PKG="lua-${{ needs.source.outputs.version }}.tar.gz"
           find artifacts -type f \
             \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.pkg' -o -name '*-setup.exe' \) \
+            ! -name "$SRC_PKG" \
             -exec cp {} out/ \;
           find artifacts -type f -name '*.sha256' -exec cp {} out/ \;
 
