@@ -147,10 +147,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # MINGW64(MSVCRT) 已被 MSYS2 标记 deprecated，官方推荐 UCRT64。
+          # UCRT64 的编译器就叫 gcc（不带 target 前缀），
+          # build-windows.sh 会自动探测，脚本本身不用改。
           - os: windows-2025
-            msystem: MINGW64
+            msystem: UCRT64
             arch: x64
-            gccpkg: mingw-w64-x86_64-gcc
+            gccpkg: mingw-w64-ucrt-x86_64-gcc
             innoarch: x64compatible
           - os: windows-11-arm
             msystem: CLANGARM64

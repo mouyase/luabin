@@ -49,10 +49,27 @@ echo "sha256: $ACTUAL"
 
 # ------------------------------------------------ 2. 判定交叉编译前缀
 case "${ARCH:-$(uname -m)}" in
-  x86_64|amd64|x64) ARCH=x64   ; PREFIX=x86_64-w64-mingw32  ;;
-  aarch64|arm64)    ARCH=arm64 ; PREFIX=aarch64-w64-mingw32 ;;
+  x86_64|amd64|x64) ARCH=x64   ; CROSS=x86_64-w64-mingw32  ;;
+  aarch64|arm64)    ARCH=arm64 ; CROSS=aarch64-w64-mingw32 ;;
   *) echo "unsupported arch: ${ARCH:-$(uname -m)}" >&2 ; exit 1 ;;
 esac
+
+# 选编译器：优先当前 MSYSTEM 的原生名字（UCRT64/CLANG64 里就叫 gcc），
+# 没有再退回带 target 前缀的形式（MINGW64 传统做法）。
+#
+# MINGW64(MSVCRT) 已被 MSYS2 标记为 deprecated，官方推荐 UCRT64。
+# 用"当前环境的 gcc"而不是硬编码前缀，能同时适配这几套环境。
+CC_BIN=""
+for cand in gcc "${CROSS}-gcc"; do
+  if command -v "$cand" >/dev/null 2>&1; then CC_BIN=$cand ; break ; fi
+done
+[ -n "$CC_BIN" ] || { echo "找不到 gcc（尝试过 gcc 与 ${CROSS}-gcc）" >&2 ; exit 1 ; }
+
+# 同族的 nm，用于校验 DLL 导出符号
+NM_BIN=""
+for cand in nm "${CROSS}-nm"; do
+  if command -v "$cand" >/dev/null 2>&1; then NM_BIN=$cand ; break ; fi
+done
 
 # 语言版本号（5.5.1 -> 5.5）。不执行产物取版本：
 # 交叉编译时本机跑不了目标架构的 exe（如 arm64 runner 上编 x64）。
@@ -61,7 +78,9 @@ case "$VERSION" in
   *.*)   LUA_LANG="$VERSION" ;;
   *)     echo "无法解析版本号: $VERSION" >&2 ; exit 1 ;;
 esac
-say "target: windows-${ARCH} (${PREFIX}-gcc)"
+say "target: windows-${ARCH}"
+echo "compiler: $CC_BIN ($("$CC_BIN" --version | head -1))"
+echo "msystem:  ${MSYSTEM:-unknown}"
 
 # ------------------------------------------------ 3. 编译
 rm -rf "$PKG"
@@ -76,7 +95,7 @@ cd "$PKG"
 # 外层若也传 AR/RANLIB，会和 recipe 内赋值打架，
 # 在不同 make 版本上产出错架构或空 DLL。只传 CC 最稳。
 say "build"
-make mingw CC="${PREFIX}-gcc"
+make mingw CC="$CC_BIN"
 
 # ------------------------------------------------ 4. 自检
 say "self-check"
@@ -123,13 +142,14 @@ if [ "$ACTUAL_MACHINE" != "$EXPECT_MACHINE" ]; then
 fi
 
 # DLL 必须导出 lua_* 符号，否则 require 加载 C 扩展会找不到入口
-if command -v "${PREFIX}-nm" >/dev/null 2>&1; then
-  if ! "${PREFIX}-nm" -g src/lua55.dll 2>/dev/null | grep -qi 'T luaL_newstate'; then
+if [ -n "$NM_BIN" ]; then
+  if ! "$NM_BIN" -g src/lua55.dll 2>/dev/null | grep -qi 'T luaL_newstate'; then
     echo "lua55.dll 缺少 luaL_newstate 导出" >&2
     exit 1
   fi
+  echo "DLL 导出符号检查通过"
 else
-  echo "warning: ${PREFIX}-nm 不可用，跳过导出符号检查" >&2
+  echo "warning: nm 不可用，跳过导出符号检查" >&2
 fi
 
 # ------------------------------------------------ 5. 核心测试
@@ -190,10 +210,10 @@ cat > "$STAGE/BUILD-INFO" <<EOF
 lua ${VERSION}
 plat windows
 arch ${ARCH}
-compiler ${PREFIX}-gcc
+compiler ${CC_BIN}
 built-at $(date -u +%Y-%m-%dT%H:%M:%SZ)
 msystem ${MSYSTEM:-unknown}
-cc $(${PREFIX}-gcc --version 2>/dev/null | head -1 || echo unknown)
+cc $($CC_BIN --version 2>/dev/null | head -1 || echo unknown)
 EOF
 
 rm -f "$OUTDIR/${TAG}.zip"
