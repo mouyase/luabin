@@ -131,6 +131,7 @@ if [ "$MAJOR" = "50" ]; then
   LUAC_EXE="${PWD}/bin/luac.exe"
   INC_DIR="${PWD}/include"
   LIB_DIR="${PWD}/lib"
+  SRC_DIR=""
 else
   # 5.1+ 有 mingw 目标，只覆盖 CC。
   #
@@ -144,6 +145,7 @@ else
   LUAC_EXE="${PWD}/src/luac.exe"
   INC_DIR="${PWD}/src"
   LIB_DIR="${PWD}/src"
+  SRC_DIR="${PWD}/src"
 fi
 
 [ -x "$LUA_EXE" ]  || { echo "missing $LUA_EXE" >&2 ; exit 1 ; }
@@ -249,10 +251,18 @@ mkdir -p "$STAGE/bin" "$STAGE/include" "$STAGE/lib" "$STAGE/share/lua/${VTAG}"
 cp "$LUA_EXE"  "$STAGE/bin/lua.exe"
 cp "$LUAC_EXE" "$STAGE/bin/luac.exe"
 
-# DLL 只在 5.1+ 存在
-if [ "$MAJOR" != "50" ] && [ -f "src/${DLL_NAME}" ]; then
-  cp "src/${DLL_NAME}" "$STAGE/bin/"
-  [ -f "src/${DLL_NAME}.a" ] && cp "src/${DLL_NAME}.a" "$STAGE/lib/"
+# DLL 只在 5.1+ 存在。
+# 注意用绝对路径：这里已经 cd 到 $WORKDIR，相对路径 src/ 指向的是
+# $WORKDIR/src，不存在，[ -f ] 判断会静默失败，DLL 就漏掉了。
+if [ "$MAJOR" != "50" ]; then
+  if [ -f "${SRC_DIR}/${DLL_NAME}" ]; then
+    cp "${SRC_DIR}/${DLL_NAME}" "$STAGE/bin/"
+    echo "packaged ${DLL_NAME}"
+  else
+    echo "missing ${SRC_DIR}/${DLL_NAME}" >&2
+    exit 1
+  fi
+  [ -f "${SRC_DIR}/${DLL_NAME}.a" ] && cp "${SRC_DIR}/${DLL_NAME}.a" "$STAGE/lib/"
 fi
 
 # 头文件：5.0 在 include/，5.1 的 lua.hpp 在 etc/，5.2+ 都在 src/
@@ -285,6 +295,18 @@ EOF
 
 rm -f "$OUTDIR/${TAG}.zip"
 (cd "$STAGE" && zip -qr "$OUTDIR/${TAG}.zip" .)
+
+# 自检 zip 内容：DLL 漏了的话 lua.exe 在用户机器上直接起不来，
+# 这类错误编译阶段发现不了，必须在打包后查一次。
+if [ "$MAJOR" != "50" ]; then
+  if unzip -l "$OUTDIR/${TAG}.zip" | grep -q "${DLL_NAME}"; then
+    echo "zip 含 ${DLL_NAME}"
+  else
+    echo "zip 里缺少 ${DLL_NAME}" >&2
+    unzip -l "$OUTDIR/${TAG}.zip"
+    exit 1
+  fi
+fi
 (cd "$OUTDIR" && sha256sum "${TAG}.zip" > "${TAG}.zip.sha256")
 
 say "done: ${TAG}.zip"
