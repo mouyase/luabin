@@ -1,0 +1,17 @@
+# 构建产物
+dist/
+work/
+stage-*/
+verify/
+
+# 源码与测试包
+lua-*.tar.gz
+lua-*-tests.tar.gz
+
+# 安装包产物
+*.pkg
+*.zip
+*-setup.exe
+
+# 系统垃圾
+.DS_Store

@@ -1,0 +1,421 @@
+name: build
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Lua 版本（如 5.5.1）'
+        required: true
+        default: '5.5.1'
+
+permissions:
+  contents: read
+
+env:
+  LUA_VERSION: ${{ github.event.inputs.version || '5.5.1' }}
+
+jobs:
+  # ================================================================ 源码
+  # 单点下载 + 计算 sha256，其余 job 复用同一份源码与哈希。
+  # 避免各平台各自下载、各自可能拿到不同内容。
+  source:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha256: ${{ steps.sha.outputs.sha256 }}
+      version: ${{ steps.sha.outputs.version }}
+    steps:
+      - name: Download upstream tarball
+        run: curl -fsSL -O "https://www.lua.org/ftp/lua-${LUA_VERSION}.tar.gz"
+
+      - name: Compute sha256
+        id: sha
+        run: |
+          set -eu
+          SHA=$(sha256sum "lua-${LUA_VERSION}.tar.gz" | cut -d' ' -f1)
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$LUA_VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Lua ${LUA_VERSION}"
+            echo ""
+            echo '| 项 | 值 |'
+            echo '|---|---|'
+            echo "| 源码 sha256 | \`$SHA\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lua-src
+          path: lua-*.tar.gz
+          retention-days: 1
+
+  # ================================================================ macOS
+  build-macos:
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-15 是 Apple Silicon（arm64）
+          # macos-15-intel 是 Intel（x64）
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: lua-src
+          path: work
+
+      - name: Build, test, package
+        env:
+          EXPECTED_SHA256: ${{ needs.source.outputs.sha256 }}
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+          ARCH: ${{ matrix.arch }}
+        run: |
+          sh scripts/build-macos.sh \
+            "${{ needs.source.outputs.version }}" \
+            "$PWD/dist" \
+            "$PWD/work"
+
+      - name: Verify artifacts
+        run: |
+          set -eu
+          echo "== 产物清单 =="
+          ls -lh dist/
+
+          echo "== tar.gz 可解压可运行 =="
+          rm -rf verify && mkdir verify
+          tar -C verify -xzf dist/lua-*-macos-${{ matrix.arch }}.tar.gz
+          ./verify/bin/lua -v
+          ./verify/bin/lua -e 'print("ok:", _VERSION, math.maxinteger)'
+          file ./verify/bin/lua
+
+          echo "== 架构断言 =="
+          case "${{ matrix.arch }}" in
+            arm64) file ./verify/bin/lua | grep -q 'arm64' ;;
+            x64)   file ./verify/bin/lua | grep -q 'x86_64' ;;
+          esac
+
+          echo "== 部署目标断言（不能高于 11.0）=="
+          MINOS=$(otool -l ./verify/bin/lua | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
+          echo "minos=$MINOS"
+          [ "${MINOS%%.*}" -le 11 ]
+
+          echo "== pkg 结构 =="
+          pkgutil --payload-files dist/lua-*-macos-${{ matrix.arch }}.pkg | head -20
+          pkgutil --payload-files dist/lua-*-macos-${{ matrix.arch }}.pkg | grep -q 'usr/local/bin/lua'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lua-macos-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/*.pkg
+            dist/*.pkg.sha256
+          retention-days: 7
+
+  # ================================================================ Windows
+  build-windows:
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            msystem: MINGW64
+            arch: x64
+            gccpkg: mingw-w64-x86_64-gcc
+            archflag: x64
+          - os: windows-11-arm
+            msystem: CLANGARM64
+            arch: arm64
+            gccpkg: mingw-w64-clang-aarch64-gcc-compat
+            archflag: arm64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: lua-src
+          path: work
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: false
+          install: >-
+            base-devel
+            ${{ matrix.gccpkg }}
+            zip
+            curl
+            perl
+
+      - name: Build, test, package
+        env:
+          EXPECTED_SHA256: ${{ needs.source.outputs.sha256 }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          sh scripts/build-windows.sh \
+            "${{ needs.source.outputs.version }}" \
+            "$PWD/dist" \
+            "$PWD/work"
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # build-windows.sh 把 stage 路径写在 pkg-input.env 里
+          $envFile = 'dist\pkg-input.env'
+          if (-not (Test-Path $envFile)) { throw "缺少 $envFile" }
+
+          $vars = @{}
+          Get-Content $envFile | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { $vars[$matches[1]] = $matches[2] }
+          }
+          $stage = $vars['LUABIN_STAGE']
+          $tag   = $vars['LUABIN_TAG']
+          Write-Host "stage=$stage"
+          Write-Host "tag=$tag"
+
+          if (-not (Test-Path $stage)) { throw "stage 目录不存在: $stage" }
+
+          # Inno Setup 在 runner 上预装（6.7.1），但路径可能因版本而变
+          $iscc = @(
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+            'C:\Program Files\Inno Setup 6\ISCC.exe'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+          if (-not $iscc) {
+            # 退而求其次：从 PATH 找
+            $cmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
+            if ($cmd) { $iscc = $cmd.Source }
+          }
+          if (-not $iscc) { throw "找不到 ISCC.exe（Inno Setup）" }
+          Write-Host "ISCC=$iscc"
+
+          $outDir = (Resolve-Path 'dist').Path
+          & $iscc `
+            "/DStageDir=$stage" `
+            "/DTag=$tag" `
+            "/DVersion=$($vars['LUABIN_VERSION'])" `
+            "/DArch=$($vars['LUABIN_ARCH'])" `
+            "/DOutDir=$outDir" `
+            'packaging\luabin.iss'
+
+          if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败，退出码 $LASTEXITCODE" }
+
+          $setup = Get-ChildItem dist\*-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "没有生成 setup.exe" }
+          Write-Host "安装包: $($setup.Name) ($([math]::Round($setup.Length/1MB,2)) MB)"
+
+          # 生成 sha256
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($setup.Name)" | Out-File -FilePath "$($setup.FullName).sha256" -Encoding ascii -NoNewline
+
+      - name: Verify artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host '== 产物清单 =='
+          Get-ChildItem dist | Format-Table Name, Length
+
+          # ZIP 能解压且 lua.exe 能跑
+          $zip = Get-ChildItem 'dist\*.zip' | Select-Object -First 1
+          if (-not $zip) { throw '没有生成 zip' }
+          Remove-Item verify -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -Path $zip.FullName -DestinationPath verify -Force
+
+          & .\verify\bin\lua.exe -v
+          & .\verify\bin\lua.exe -e "print('ok:', _VERSION, math.maxinteger)"
+          if ($LASTEXITCODE -ne 0) { throw 'lua.exe 运行失败' }
+
+          # DLL 必须存在，否则 require 加载 C 扩展会失败
+          if (-not (Test-Path 'verify\bin\lua55.dll')) { throw '缺少 lua55.dll' }
+
+          # 安装包必须存在
+          $setup = Get-ChildItem 'dist\*-setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw '缺少 setup.exe' }
+
+          # 静默安装到临时目录，验证装完能用
+          $target = Join-Path $env:RUNNER_TEMP "lua-install-test"
+          $proc = Start-Process -FilePath $setup.FullName -Wait -PassThru `
+            -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$target"
+          if ($proc.ExitCode -ne 0) { throw "安装器退出码 $($proc.ExitCode)" }
+
+          $installedLua = Join-Path $target 'bin\lua.exe'
+          if (-not (Test-Path $installedLua)) { throw "安装后找不到 $installedLua" }
+          & $installedLua -v
+          & $installedLua -e "print('installed ok:', _VERSION)"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lua-windows-${{ matrix.arch }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+            dist/*-setup.exe
+            dist/*-setup.exe.sha256
+          retention-days: 7
+
+  # ================================================================ 脚本自检
+  # Linux 不给二进制，但构建脚本必须能在干净环境跑通
+  verify-linux-script:
+    needs: source
+    runs-on: ubuntu-24.04
+    container: debian:bookworm-slim
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update
+          # git 与 tar 是 actions/checkout 的硬依赖，slim 镜像里没有
+          apt-get install -y --no-install-recommends \
+            build-essential curl ca-certificates perl git tar gzip
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: lua-src
+          path: work
+
+      - name: Run build-linux.sh
+        env:
+          EXPECTED_SHA256: ${{ needs.source.outputs.sha256 }}
+          LUABIN_LOCAL_SRC: ${{ github.workspace }}/work/lua-${{ needs.source.outputs.version }}.tar.gz
+        run: |
+          set -eu
+          sh scripts/build-linux.sh "${{ needs.source.outputs.version }}" "$RUNNER_TEMP/prefix"
+
+      - name: Verify installed tree
+        run: |
+          set -eu
+          P="$RUNNER_TEMP/prefix"
+          "$P/bin/lua" -v
+          "$P/bin/lua" -e 'print("ok:", _VERSION, math.maxinteger)'
+          test -f "$P/include/lua.h"
+          test -f "$P/lib/liblua.a"
+          # 静态库能被链接
+          printf '#include <lua.h>\nint main(void){return LUA_VERSION_NUM==505?0:1;}\n' > /tmp/t.c
+          cc /tmp/t.c -I"$P/include" -L"$P/lib" -llua -lm -o /tmp/t
+          /tmp/t && echo "static lib link ok"
+
+  # ================================================================ 发布
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-macos, build-windows, verify-linux-script]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Collect and checksum
+        run: |
+          set -eu
+          mkdir -p out
+          # 必须同时收录 .sha256：install.sh / install.ps1 会去 Release 下载
+          # <file>.sha256 做校验，只发二进制会导致校验永远失败退化为跳过。
+          find artifacts -type f \
+            \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.pkg' -o -name '*-setup.exe' \) \
+            -exec cp {} out/ \;
+          find artifacts -type f -name '*.sha256' -exec cp {} out/ \;
+
+          cd out
+          # 去掉构建机带来的绝对路径，只留文件名
+          for f in *.sha256; do
+            [ -f "$f" ] || continue
+            base="${f%.sha256}"
+            [ -f "$base" ] || { rm -f "$f"; continue; }
+            ( sha256sum "$base" ) > "$f.tmp" && mv "$f.tmp" "$f"
+          done
+
+          ls -lh
+          sha256sum *.tar.gz *.zip *.pkg *-setup.exe > SHA256SUMS.txt
+          echo '--- 每个产物是否有配对校验文件 ---'
+          for f in *.tar.gz *.zip *.pkg *-setup.exe; do
+            [ -f "$f.sha256" ] && echo "ok   $f" || echo "miss $f"
+          done
+          cat SHA256SUMS.txt
+
+      - name: Write release notes
+        run: |
+          set -eu
+          VERSION="${{ needs.build-macos.outputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
+          cat > notes.md <<EOF
+          ## Lua ${VERSION}
+
+          从 [lua.org](https://www.lua.org/ftp/) 官方源码构建。
+
+          ### macOS
+
+          | 文件 | 说明 |
+          |---|---|
+          | \`lua-${VERSION}-macos-arm64.tar.gz\` | Apple Silicon，解压即用 |
+          | \`lua-${VERSION}-macos-x64.tar.gz\` | Intel，解压即用 |
+          | \`lua-${VERSION}-macos-arm64.pkg\` | Apple Silicon 安装包 |
+          | \`lua-${VERSION}-macos-x64.pkg\` | Intel 安装包 |
+
+          \`.pkg\` 安装到 \`/usr/local\`。**未签名未公证**，浏览器下载的会被 Gatekeeper 拦截。
+          推荐用安装脚本（curl 下载不带 quarantine 标记）：
+
+          \`\`\`sh
+          curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | sh
+          \`\`\`
+
+          ### Windows
+
+          | 文件 | 说明 |
+          |---|---|
+          | \`lua-${VERSION}-windows-x64.zip\` | x64，解压即用 |
+          | \`lua-${VERSION}-windows-arm64.zip\` | arm64，解压即用 |
+          | \`lua-${VERSION}-windows-x64-setup.exe\` | x64 安装包 |
+          | \`lua-${VERSION}-windows-arm64-setup.exe\` | arm64 安装包 |
+
+          \`.exe\` 未签名，SmartScreen 会提示「更多信息 → 仍要运行」。
+          或用脚本安装（装到用户目录，不需要管理员）：
+
+          \`\`\`powershell
+          irm https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.ps1 | iex
+          \`\`\`
+
+          ### Linux
+
+          不发预编译包。glibc 符号版本化会让预编译产物在老发行版上报
+          \`version 'GLIBC_x.yz' not found\`，而 musl 静态版会废掉 \`dlopen\`，
+          \`require\` 加载 C 扩展直接失效。现场编译约 30 秒：
+
+          \`\`\`sh
+          curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/build-linux.sh | sh
+          \`\`\`
+
+          ### 校验
+
+          每个文件附 \`.sha256\`，另有汇总的 \`SHA256SUMS.txt\`。
+          EOF
+          cat notes.md
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            out/*
+          body_path: notes.md
+          generate_release_notes: false
+          fail_on_unmatched_files: true
