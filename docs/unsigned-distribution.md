@@ -8,7 +8,7 @@ Windows 和 macOS 都没买签名证书。这是权衡后的选择，代价得�
 
 **curl 下载不带这个标记。** 实测过，`xattr` 输出是空的。
 
-```sh
+```
 $ xattr qt.tar.gz
 $ echo $?
 0

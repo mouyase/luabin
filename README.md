@@ -10,27 +10,42 @@ Lua 官方只发源码。第三方预编译站 [LuaBinaries](https://luabinaries
 
 macOS 装到 `~/.local`，Windows 装到 `%LOCALAPPDATA%\Programs\Lua\<版本>`，都不需要管理员权限。
 
-```sh
-# macOS
-curl -fsSL https://raw.githubusercontent.com/mouyase/luabin/main/install.sh | sh
+### macOS
 
-# 指定版本
-LUABIN_VERSION=5.4.9 sh install.sh
+```sh
+curl -fsSL https://raw.githubusercontent.com/mouyase/luabin/main/install.sh | sh
 ```
+
+指定版本（默认装最新的 5.5.1）。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mouyase/luabin/main/install.sh | sh -s 5.4.9
+```
+
+### Windows
 
 ```powershell
-# Windows
-irm https://raw.githubusercontent.com/mouyase/luabin/main/install.ps1 | iex
-
-# 指定版本
-$env:LUABIN_VERSION='5.4.9'
 irm https://raw.githubusercontent.com/mouyase/luabin/main/install.ps1 | iex
 ```
 
-Linux 不发预编译包，现场编译，约 30 秒。
+指定版本。
+
+```powershell
+$env:LUABIN_VERSION='5.4.9'; irm https://raw.githubusercontent.com/mouyase/luabin/main/install.ps1 | iex
+```
+
+### Linux
+
+不发预编译包，现场编译，约 30 秒。
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mouyase/luabin/main/scripts/build-linux.sh | sh
+```
+
+指定版本。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mouyase/luabin/main/scripts/build-linux.sh | sh -s 5.4.9
 ```
 
 GitHub 直连不通的话，脚本会自动按「直连 → ghfast.top → gh-proxy.com」重试，也可以自己指定 `LUABIN_MIRROR`。走哪条通道都会用官方 `.sha256` 强校验。

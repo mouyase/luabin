@@ -400,52 +400,67 @@ jobs:
         run: |
           set -eu
           V="${{ needs.setup.outputs.version }}"
-          SERIES="${V%.*}"
-          cat > notes.md <<EOF
-          ## Lua ${V}
+          REPO="${GITHUB_REPOSITORY}"
 
-          从 [lua.org](https://www.lua.org/ftp/) 官方源码构建。
+          # 用 heredoc 写 Markdown 时必须处理缩进：
+          # YAML 的 | 块标量要求内容整体缩进，而 heredoc 会把这些
+          # 前导空格原样写进 notes.md。Markdown 里行首四个空格
+          # 就是缩进代码块，整篇说明会渲染错。
+          #
+          # 解法是缩进写、写完剥掉公共前导空格。
+          cat > notes.raw <<'EOF'
+          ## Lua __VERSION__
+
+          从 [lua.org](https://www.lua.org/ftp/) 官方源码构建，覆盖 5.0 到 5.5 全部发布版本。
 
           ### macOS
 
-          \`.tar.gz\` 解压即用，\`.pkg\` 安装到 \`/usr/local\`。
+          `.tar.gz` 解压即用，`.pkg` 安装到 `/usr/local`。
 
-          \`\`\`sh
-          curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | sh -s ${V}
-          \`\`\`
+          一键安装：
+
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/__REPO__/main/install.sh | sh -s __VERSION__
+          ```
 
           ### Windows
 
-          \`.zip\` 解压即用，\`-setup.exe\` 走安装向导。
+          `.zip` 解压即用，`-setup.exe` 走安装向导。
 
-          \`\`\`powershell
-          \$env:LUABIN_VERSION='${V}'
-          irm https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.ps1 | iex
-          \`\`\`
+          一键安装：
+
+          ```powershell
+          $env:LUABIN_VERSION='__VERSION__'; irm https://raw.githubusercontent.com/__REPO__/main/install.ps1 | iex
+          ```
 
           ### Linux
 
-          不发预编译包，现场编译。
+          不发预编译包，现场编译，约 30 秒。
 
-          \`\`\`sh
-          curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/build-linux.sh | sh -s ${V}
-          \`\`\`
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/__REPO__/main/scripts/build-linux.sh | sh -s __VERSION__
+          ```
 
           ### 说明
 
-          macOS 的 \`.pkg\` 和 Windows 的 \`-setup.exe\` 均未签名。macOS 浏览器下载的会被 Gatekeeper 拦截，用安装脚本（curl 不带 quarantine 标记）可避免。Windows 会弹 SmartScreen，点「更多信息 → 仍要运行」。
+          `.pkg` 和 `-setup.exe` 都没签名。macOS 上浏览器下载会被 Gatekeeper 拦截，用安装脚本可避免（curl 不带 quarantine 标记）。Windows 会弹 SmartScreen，点「更多信息 → 仍要运行」。
 
-          每个文件附 \`.sha256\`，另有汇总的 \`SHA256SUMS.txt\`。
+          每个文件附 `.sha256`，另有汇总的 `SHA256SUMS.txt`。GitHub 直连不通时脚本会自动走镜像，详见 [README](https://github.com/__REPO__#readme)。
           EOF
-          cat notes.md
 
-      # make_latest 必须是 false。
-      #
-      # 默认 true 意味着每次发布都把 "Latest" 标记抢到刚发的那个版本上。
-      # nightly 会按版本号顺序批量构建，最后跑完的那个（往往不是最新版本）
-      # 就会占住 Latest，仓库首页显示的版本号因此是错的。
-      #
-      # 真正的 latest 由单独的 mark-latest job 在全部构建结束后设一次。
+          # 剥掉公共的 10 空格缩进（heredoc 在 YAML 里的缩进量）
+          sed 's/^          //' notes.raw > notes.md
+          rm -f notes.raw
+
+          # 占位符替换成实际值。
+          # 不用 sed -i：BSD sed（macOS）和 GNU sed 的参数不同。
+          # 这里用临时文件，两边都能跑。
+          sed "s|__VERSION__|${V}|g; s|__REPO__|${REPO}|g" notes.md > notes.tmp
+          mv notes.tmp notes.md
+
+          echo "=== notes.md 前 12 行 ==="
+          head -12 notes.md
+
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.setup.outputs.version }}

@@ -39,8 +39,7 @@ LUABIN_MIRROR=https://你的代理 sh install.sh
 Windows 上这样写。
 
 ```powershell
-$env:LUABIN_MIRROR='https://你的代理'
-irm https://ghfast.top/https://raw.githubusercontent.com/mouyase/luabin/main/install.ps1 | iex
+$env:LUABIN_MIRROR='https://你的代理'; irm https://ghfast.top/https://raw.githubusercontent.com/mouyase/luabin/main/install.ps1 | iex
 ```
 
 注意 `irm` 那一句本身也要能下载到脚本。如果连脚本都取不到，先用代理前缀把脚本拉下来。

@@ -37,15 +37,13 @@ CFLAGS= -O2 -Wall -Wextra $(SYSCFLAGS) $(MYCFLAGS)
 **命令行参数不能被空格拆开。** 下面这样写是错的。
 
 ```sh
-MAKE_ARGS="CFLAGS=-O2 -Wall -Wextra -arch x86_64"
-make macosx $MAKE_ARGS
+MAKE_ARGS="CFLAGS=-O2 -Wall -Wextra -arch x86_64"; make macosx $MAKE_ARGS
 ```
 
 `$MAKE_ARGS` 展开后按空格分成五个参数，`-Wall` 被 make 当成自己的选项，报 `invalid option -- a`。正确写法得用位置参数。
 
 ```sh
-set -- "CFLAGS=-O2 -Wall -Wextra -arch x86_64"
-make macosx "$@"
+set -- "CFLAGS=-O2 -Wall -Wextra -arch x86_64"; make macosx "$@"
 ```
 
 **`-arch x64` 是无效的。** clang 只认 `x86_64`。产物命名用 `x64` 是业界习惯，传给编译器和 `hostArchitectures` 必须映射。脚本里 `ARCH` 和 `MACHO_ARCH` 是两个变量，就是为这个。
@@ -70,12 +68,10 @@ hostArchitectures="x64"       ← 错误，安装器判定不兼容，直接拒�
 生成 Bom 时会打四条 `write: Permission denied`。用最小用例也能复现。
 
 ```sh
-mkdir -p mini/root/usr/local/bin
-echo x > mini/root/usr/local/bin/t && chmod 755 mini/root/usr/local/bin/t
-pkgbuild --root mini/root --identifier t.t2 --version 1.0 --install-location / mini/t.pkg
+mkdir -p mini/root/usr/local/bin && echo x > mini/root/usr/local/bin/t && chmod 755 mini/root/usr/local/bin/t && pkgbuild --root mini/root --identifier t.t2 --version 1.0 --install-location / mini/t.pkg
 ```
 
-照样四条。这是 `pkgbuild` 在系统路径上的固有行为，与产物无关。判断产物是否正常要看两个地方，一是 `pkgutil --payload-files` 的文件清单，二是 `lsbom` 输出的权限位，`bin/lua` 应该是 `100755`。
+这样连下来是一条命令，复制粘贴就能跑。照样四条。这是 `pkgbuild` 在系统路径上的固有行为，与产物无关。判断产物是否正常要看两个地方，一是 `pkgutil --payload-files` 的文件清单，二是 `lsbom` 输出的权限位，`bin/lua` 应该是 `100755`。
 
 ## Windows
 
