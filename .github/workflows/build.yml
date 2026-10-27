@@ -357,11 +357,19 @@ jobs:
           #
           # 注意排除源码包：lua-<version>.tar.gz 与产物 tar.gz 通配相同，
           # 不排除会把源码也发到 Release 上（实测发生过）。
-          SRC_PKG="lua-${{ needs.source.outputs.version }}.tar.gz"
+          # 排除源码包。不能用 needs.source.outputs.version 拼名字：
+          # release job 里那个 output 在某些情况下取不到，变量变空，
+          # ! -name "" 就失去意义，源码照旧混进来（实测过）。
+          # 直接用 LUA_VERSION（env，作用于整个 workflow）。
+          SRC_PKG="lua-${LUA_VERSION}.tar.gz"
+          echo "排除源码包: $SRC_PKG"
           find artifacts -type f \
             \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.pkg' -o -name '*-setup.exe' \) \
             ! -name "$SRC_PKG" \
             -exec cp {} out/ \;
+
+          # 二次保险：如果还是混进来了就删掉
+          rm -f "out/$SRC_PKG"
           find artifacts -type f -name '*.sha256' -exec cp {} out/ \;
 
           cd out
