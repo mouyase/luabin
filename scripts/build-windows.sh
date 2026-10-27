@@ -296,17 +296,24 @@ EOF
 rm -f "$OUTDIR/${TAG}.zip"
 (cd "$STAGE" && zip -qr "$OUTDIR/${TAG}.zip" .)
 
-# 自检 zip 内容：DLL 漏了的话 lua.exe 在用户机器上直接起不来，
+# 自检 stage 内容：DLL 漏了的话 lua.exe 在用户机器上直接起不来，
 # 这类错误编译阶段发现不了，必须在打包后查一次。
+#
+# 不用 unzip 查 zip 内容：MSYS2 只装了 zip 没装 unzip（CI 上实测
+# `unzip: command not found`）。直接查 stage 目录更简单可靠。
 if [ "$MAJOR" != "50" ]; then
-  if unzip -l "$OUTDIR/${TAG}.zip" | grep -q "${DLL_NAME}"; then
-    echo "zip 含 ${DLL_NAME}"
+  if [ -f "$STAGE/bin/${DLL_NAME}" ]; then
+    echo "stage 含 ${DLL_NAME}"
   else
-    echo "zip 里缺少 ${DLL_NAME}" >&2
-    unzip -l "$OUTDIR/${TAG}.zip"
+    echo "stage 里缺少 bin/${DLL_NAME}" >&2
+    ls -la "$STAGE/bin"
     exit 1
   fi
 fi
+
+# 目录结构总览，出问题时便于对照
+echo "stage 内容:"
+(cd "$STAGE" && find . -type f | sort)
 (cd "$OUTDIR" && sha256sum "${TAG}.zip" > "${TAG}.zip.sha256")
 
 say "done: ${TAG}.zip"
