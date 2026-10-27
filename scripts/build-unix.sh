@@ -229,9 +229,12 @@ fi
 if [ "$CAN_RUN" = "1" ]; then
   "$LUA_BIN" -v
   # 版本号断言用 LUA_LANG，不写死
-  # 5.0.x 的 _VERSION 是完整补丁号（"Lua 5.0.3"），5.1+ 只到次版本号。
-  # 用前缀匹配两边都成立。
-  "$LUA_BIN" -e "assert(_VERSION:find('^Lua ${LUA_LANG}'), 'version mismatch: ' .. tostring(_VERSION)) print('version ok:', _VERSION)"
+  # 版本断言要绕开两处差异：
+  #   1. 5.0.x 的 _VERSION 是完整补丁号（"Lua 5.0.3"），5.1+ 只到次版本号
+  #   2. 5.0 没有 `obj:method()` 语法，:find 会报
+  #      "attempt to index global `_VERSION'"
+  # 用 string.find(s, pat) 的函数式写法，两边都能跑。
+  "$LUA_BIN" -e "assert(string.find(_VERSION, '^Lua ${LUA_LANG}'), 'version mismatch: ' .. tostring(_VERSION)) print('version ok:', _VERSION)"
   "$LUA_BIN" -e "assert(loadstring or load, 'no load') print('load ok')" 2>/dev/null \
     || "$LUA_BIN" -e "assert(load, 'no load') print('load ok')"
 fi

@@ -224,9 +224,11 @@ say "自检"
 "$LUA_BIN" -e '
   -- 5.0.x 的 _VERSION 是完整补丁号（"Lua 5.0.3"），
   -- 5.1+ 只到次版本号（"Lua 5.1"）。用前缀匹配两边都成立。
-  assert(_VERSION:find("^Lua '"$LUA_LANG"'"), "版本不符: " .. tostring(_VERSION))
-  -- 5.3+ 才有整数子类型和 utf8 库，按版本分支
-  if _VERSION >= "Lua 5.3" then
+  assert(string.find(_VERSION, "^Lua '"$LUA_LANG"'"), "版本不符: " .. tostring(_VERSION))
+  -- 5.3+ 才有整数子类型和 utf8 库。
+  -- 不用字符串比较（"Lua 5.0.3" vs "Lua 5.3" 的字典序不可靠），
+  -- 直接探测特性是否存在。
+  if math.maxinteger ~= nil then
     assert(math.maxinteger and math.maxinteger > 2^62, "缺少 64 位整数")
     assert(utf8 and utf8.len("汉字") == 2, "缺少 utf8 库")
   end

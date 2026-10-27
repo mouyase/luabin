@@ -156,8 +156,10 @@ fi
 # ------------------------------------------------ 4. 自检
 say "self-check"
 "$LUA_EXE" -v
-# 5.0.x 的 _VERSION 是完整补丁号，5.1+ 只到次版本号，用前缀匹配
-"$LUA_EXE" -e "assert(_VERSION:find('^Lua ${LUA_LANG}'), 'version mismatch: ' .. tostring(_VERSION)) print('version ok:', _VERSION)"
+# 版本断言两处差异都要绕：
+#   1. 5.0.x 的 _VERSION 是完整补丁号，5.1+ 只到次版本号 → 前缀匹配
+#   2. 5.0 没有 obj:method() 语法 → 用 string.find(s, pat) 函数式写法
+"$LUA_EXE" -e "assert(string.find(_VERSION, '^Lua ${LUA_LANG}'), 'version mismatch: ' .. tostring(_VERSION)) print('version ok:', _VERSION)"
 
 # 只有 5.3+ 才有整数子类型和 utf8 库，按版本分支
 case "$MAJOR" in
