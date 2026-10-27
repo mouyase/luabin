@@ -406,23 +406,39 @@ jobs:
           # heredoc 内容带 YAML 的十空格缩进，写完要剥掉，
           # 否则 Markdown 会把行首四空格当缩进代码块。
           # 用占位符避开 shell 变量与 Markdown 反引号的互相干扰。
+          #
+          # 绿色版与安装包分成上下两段、各一张表。
+          # 合成四列表的话，链接文字只能用「.tar.gz」这种缩写，
+          # 不然表格会撑出横向滚动条；拆开之后每张表三列，
+          # 链接文字能写完整文件名，一眼看出下的是哪个平台的包。
           cat > notes.raw <<'EOF'
           ## Lua __VERSION__
 
           从 [lua.org](https://www.lua.org/ftp/) 官方源码构建。覆盖 Lua 5.0 到 5.5 全部发布版本。
 
-          ### 下载
+          ### 绿色版
 
-          「绿色版」解压即用，不写注册表、不装到系统目录，删掉文件夹就卸载干净。
-          「安装包」走系统安装流程，会注册到「应用与功能」并写入 PATH。
+          解压即用，不写注册表、不装到系统目录，删掉文件夹就卸载干净。
 
-          | 系统 | 架构 | 绿色版 | 安装包 |
-          |---|---|---|---|
-          | macOS | Apple Silicon | [.tar.gz](__DL__/lua-__VERSION__-macos-arm64.tar.gz) | [.pkg](__DL__/lua-__VERSION__-macos-arm64.pkg) |
-          | macOS | Intel | [.tar.gz](__DL__/lua-__VERSION__-macos-x64.tar.gz) | [.pkg](__DL__/lua-__VERSION__-macos-x64.pkg) |
-          | Windows | x64 | [.zip](__DL__/lua-__VERSION__-windows-x64.zip) | [.exe](__DL__/lua-__VERSION__-windows-x64-setup.exe) |
-          | Windows | ARM64 | [.zip](__DL__/lua-__VERSION__-windows-arm64.zip) | [.exe](__DL__/lua-__VERSION__-windows-arm64-setup.exe) |
-          | Linux | 任意 | 现场编译，见下方 | 无 |
+          | 系统 | 架构 | 文件 |
+          |---|---|---|
+          | macOS | Apple Silicon | [lua-__VERSION__-macos-arm64.tar.gz](__DL__/lua-__VERSION__-macos-arm64.tar.gz) |
+          | macOS | Intel | [lua-__VERSION__-macos-x64.tar.gz](__DL__/lua-__VERSION__-macos-x64.tar.gz) |
+          | Windows | x64 | [lua-__VERSION__-windows-x64.zip](__DL__/lua-__VERSION__-windows-x64.zip) |
+          | Windows | ARM64 | [lua-__VERSION__-windows-arm64.zip](__DL__/lua-__VERSION__-windows-arm64.zip) |
+          | Linux | 任意 | 无预编译包，见下方「Linux」 |
+
+          ### 安装包
+
+          走系统安装流程，会注册到「应用与功能」并写入 PATH。
+
+          | 系统 | 架构 | 文件 |
+          |---|---|---|
+          | macOS | Apple Silicon | [lua-__VERSION__-macos-arm64.pkg](__DL__/lua-__VERSION__-macos-arm64.pkg) |
+          | macOS | Intel | [lua-__VERSION__-macos-x64.pkg](__DL__/lua-__VERSION__-macos-x64.pkg) |
+          | Windows | x64 | [lua-__VERSION__-windows-x64-setup.exe](__DL__/lua-__VERSION__-windows-x64-setup.exe) |
+          | Windows | ARM64 | [lua-__VERSION__-windows-arm64-setup.exe](__DL__/lua-__VERSION__-windows-arm64-setup.exe) |
+          | Linux | 任意 | 无 |
 
           不确定自己的架构，macOS 看左上角苹果菜单 →「关于本机」，Windows 看「设置 → 系统 → 系统信息」。
 
