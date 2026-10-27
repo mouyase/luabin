@@ -203,13 +203,40 @@ rm -f "$OUTDIR/${TAG}.zip"
 say "done: ${TAG}.zip"
 ls -lh "$OUTDIR/${TAG}.zip"
 
-# ------------------------------------------------ 7. 安装包
+# ------------------------------------------------ 7. 安装包交接
 # Inno Setup 在原生 Windows 上跑（ISCC.exe），这里只做交接：
 # 把 stage 路径写出来，workflow 的 PowerShell 步骤读它去编译 .iss。
+#
+# 关键：必须写成 Windows 路径。MSYS2 的 $PWD 是 /c/a/luabin/... 这种形式，
+# PowerShell 的 Test-Path 认不出来（实测报 "stage 目录不存在"）。
+# cygpath -w 在 MSYS2 里一定存在，转换后再写。
+win_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    # 退路：手写前缀替换。cut -c3- 会吃掉盘符后的第一个 "/"，
+    # 必须自己补回来，否则 c:\luabin 会变成 c:luabin。
+    p=$1
+    case "$p" in
+      /[a-zA-Z]/*)
+        drive=$(printf '%s' "$p" | cut -c2 | tr 'a-z' 'A-Z')
+        rest=$(printf '%s' "$p" | cut -c3- | tr '/' '\\')
+        printf '%s:%s\n' "$drive" "$rest"
+        ;;
+      *) echo "$p" ;;
+    esac
+  fi
+}
+
+STAGE_WIN=$(win_path "$STAGE")
+OUTDIR_WIN=$(win_path "$OUTDIR")
+
 cat > "$OUTDIR/pkg-input.env" <<EOF
-LUABIN_STAGE=${STAGE}
+LUABIN_STAGE=${STAGE_WIN}
+LUABIN_OUTDIR=${OUTDIR_WIN}
 LUABIN_TAG=${TAG}
 LUABIN_VERSION=${VERSION}
 LUABIN_ARCH=${ARCH}
 EOF
-echo "stage 交接文件: $OUTDIR/pkg-input.env"
+echo "stage 交接文件（Windows 路径）:"
+cat "$OUTDIR/pkg-input.env"

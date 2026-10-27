@@ -151,12 +151,12 @@ jobs:
             msystem: MINGW64
             arch: x64
             gccpkg: mingw-w64-x86_64-gcc
-            archflag: x64
+            innoarch: x64compatible
           - os: windows-11-arm
             msystem: CLANGARM64
             arch: arm64
             gccpkg: mingw-w64-clang-aarch64-gcc-compat
-            archflag: arm64
+            innoarch: arm64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -230,6 +230,7 @@ jobs:
             "/DTag=$tag" `
             "/DVersion=$($vars['LUABIN_VERSION'])" `
             "/DArch=$($vars['LUABIN_ARCH'])" `
+            "/DInnoArch=${{ matrix.innoarch }}" `
             "/DOutDir=$outDir" `
             'packaging\luabin.iss'
 

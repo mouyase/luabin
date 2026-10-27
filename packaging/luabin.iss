@@ -24,6 +24,9 @@
 #ifndef Arch
   #define Arch "x64"
 #endif
+#ifndef InnoArch
+  #define InnoArch "x64compatible"
+#endif
 #ifndef OutDir
   #define OutDir "."
 #endif
@@ -51,8 +54,13 @@ OutputBaseFilename={#Tag}-setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-ArchitecturesAllowed={#Arch}
-ArchitecturesInstallIn64BitMode={#Arch}
+; ArchitecturesAllowed 的有效值是 Inno 的架构标识符，
+; 不是我们产物命名里的 x64。x64 属无效值，会让 Setup 直接报错退出：
+;   x64        → x64compatible（允许 x64 + Arm64 上的 x64 模拟）
+;   arm64      → arm64（只允许原生 Arm64）
+; 由 workflow 按矩阵传入 InnoArch。
+ArchitecturesAllowed={#InnoArch}
+ArchitecturesInstallIn64BitMode={#InnoArch}
 ChangesEnvironment=yes
 UninstallDisplayName={#AppName} {#Version} ({#Arch})
 PrivilegesRequired=admin
