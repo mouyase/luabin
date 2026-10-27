@@ -100,13 +100,36 @@ for f in src/lua55.dll src/lua.exe src/luac.exe; do
   [ -f "$f" ] || { echo "missing build output: $f" >&2; exit 1; }
 done
 
-# 架构断言：用 objdump 读 PE 头
+# 架构断言：读 PE 文件头。
+# 不用 objdump：MSYS2 的 mingw-w64-*-gcc 包不带它（binutils 是独立包），
+# CI 上实测 aarch64-w64-mingw32-objdump: command not found。
+# 直接读 PE 头：
+#   offset 60 (0x3C) 是 4 字节 e_lfanew，指向 "PE\0\0" 签名
+#   签名后紧跟 2 字节 Machine 字段：0x8664 = x86-64，0xaa64 = ARM64
 say "artifact arch"
-"${PREFIX}-objdump" -f src/lua.exe | grep -i 'file format'
-EXPECT_MACHINE=$([ "$ARCH" = "x64" ] && echo "x86-64" || echo "aarch64")
-if ! "${PREFIX}-objdump" -f src/lua.exe | grep -qi "$EXPECT_MACHINE"; then
-  echo "arch mismatch: expected $EXPECT_MACHINE" >&2
+
+pe_machine() {
+  # $1 = PE 文件路径
+  PE_OFF=$(( $(od -An -tu4 -j 60 -N4 "$1" | tr -d ' \n') + 4 ))
+  od -An -tx2 -j "$PE_OFF" -N2 "$1" | tr -d ' \n' | tr 'a-f' 'A-F' | sed 's/^0*//'
+}
+
+EXPECT_MACHINE=$([ "$ARCH" = "x64" ] && echo "8664" || echo "AA64")
+ACTUAL_MACHINE=$(pe_machine src/lua.exe)
+echo "PE machine: $ACTUAL_MACHINE (expect $EXPECT_MACHINE)"
+if [ "$ACTUAL_MACHINE" != "$EXPECT_MACHINE" ]; then
+  echo "arch mismatch: expected $EXPECT_MACHINE, got $ACTUAL_MACHINE" >&2
   exit 1
+fi
+
+# DLL 必须导出 lua_* 符号，否则 require 加载 C 扩展会找不到入口
+if command -v "${PREFIX}-nm" >/dev/null 2>&1; then
+  if ! "${PREFIX}-nm" -g src/lua55.dll 2>/dev/null | grep -qi 'T luaL_newstate'; then
+    echo "lua55.dll 缺少 luaL_newstate 导出" >&2
+    exit 1
+  fi
+else
+  echo "warning: ${PREFIX}-nm 不可用，跳过导出符号检查" >&2
 fi
 
 # ------------------------------------------------ 5. 核心测试

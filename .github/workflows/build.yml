@@ -108,9 +108,27 @@ jobs:
           echo "minos=$MINOS"
           [ "${MINOS%%.*}" -le 11 ]
 
-          echo "== pkg 结构 =="
-          pkgutil --payload-files dist/lua-*-macos-${{ matrix.arch }}.pkg | head -20
-          pkgutil --payload-files dist/lua-*-macos-${{ matrix.arch }}.pkg | grep -q 'usr/local/bin/lua'
+          # pkg 只在原生架构构建时产出（交叉编译不打包安装器）
+          echo "== pkg 检查 =="
+          if ls dist/*.pkg >/dev/null 2>&1; then
+            PKG=$(ls dist/*.pkg | head -1)
+            echo "found: $PKG"
+            pkgutil --payload-files "$PKG" | head -25
+            pkgutil --payload-files "$PKG" | grep -q 'usr/local/bin/lua'
+            pkgutil --payload-files "$PKG" | grep -q 'usr/local/bin/luac'
+            pkgutil --payload-files "$PKG" | grep -qi 'LICENSE'
+            # 安装包架构字段必须是 Mach-O 名（x86_64/arm64），不是 x64
+            rm -rf pkgx && pkgutil --expand "$PKG" pkgx
+            HOSTARCH=$(grep -o 'hostArchitectures="[^"]*"' pkgx/Distribution | head -1)
+            echo "$HOSTARCH"
+            case "${{ matrix.arch }}" in
+              arm64) echo "$HOSTARCH" | grep -q 'arm64' ;;
+              x64)   echo "$HOSTARCH" | grep -q 'x86_64' ;;
+            esac
+            echo "pkg 校验通过"
+          else
+            echo "本 job 未产出 pkg（原生架构才打包安装器），跳过"
+          fi
 
       - uses: actions/upload-artifact@v7
         with:

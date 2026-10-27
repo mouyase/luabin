@@ -211,7 +211,7 @@ ls -l "$OUTDIR/${TAG}.tar.gz"
 
 # ------------------------------------------------ 6. 打包 .pkg
 # 只有本机原生架构才打包 pkg（交叉编译出的产物不该做安装包）
-if [ "$ARCH" = "$(uname -m)" ] && [ "${MAKE_UNIVERSAL:-0}" != "1" ]; then
+if [ "$MACHO_ARCH" = "$(uname -m)" ] && [ "${MAKE_UNIVERSAL:-0}" != "1" ]; then
   say "package pkg"
   sh "${SCRIPT_DIR}/make-pkg.sh" "$VERSION" "$ARCH" "$OUTDIR" "$STAGE"
 else
