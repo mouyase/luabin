@@ -144,14 +144,29 @@ else
   make mingw CC="$CC_BIN"
 
   LUA_EXE="${PWD}/src/lua.exe"
-  LUAC_EXE="${PWD}/src/luac.exe"
+
+  # luac 的产物名各版本不同：
+  #   5.1   mingw recipe 传 LUAC_T=luac.exe 但 Makefile 里没有这个目标，
+  #         实际产出的是 src/luac（无扩展名）
+  #   5.2+  产出 src/luac.exe
+  if [ "$MAJOR" = "51" ]; then
+    LUAC_EXE="${PWD}/src/luac"
+  else
+    LUAC_EXE="${PWD}/src/luac.exe"
+  fi
+
   INC_DIR="${PWD}/src"
   LIB_DIR="${PWD}/src"
   SRC_DIR="${PWD}/src"
 fi
 
-[ -x "$LUA_EXE" ]  || { echo "missing $LUA_EXE" >&2 ; exit 1 ; }
-[ -x "$LUAC_EXE" ] || { echo "missing $LUAC_EXE" >&2 ; exit 1 ; }
+[ -x "$LUA_EXE" ]  || { echo "missing $LUA_EXE" >&2 ; ls -la "$(dirname "$LUA_EXE")" ; exit 1 ; }
+if [ ! -x "$LUAC_EXE" ]; then
+  echo "missing $LUAC_EXE" >&2
+  echo "目录内容:" >&2
+  ls -la "$(dirname "$LUAC_EXE")" >&2
+  exit 1
+fi
 
 # ------------------------------------------------ 4. 自检
 say "self-check"

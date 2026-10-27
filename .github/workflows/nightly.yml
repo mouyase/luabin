@@ -124,9 +124,75 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # ================================================================ 标记 latest
+  # build.yml 里 make_latest 设成了 false，避免每个版本发布时都抢 Latest
+  # （nightly 按版本号顺序批量构建，最后跑完的往往不是最新版本）。
+  # 这里在所有构建结束后，按语义版本排序取最大的一个，单独设一次。
+  mark-latest:
+    needs: [discover, dispatch]
+    if: needs.discover.outputs.has_new == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Wait for triggered builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          VERSIONS='${{ needs.discover.outputs.versions }}'
+          echo "等待这些版本的构建完成: $VERSIONS"
+
+          # 最多等 60 分钟。每个版本全套约 5 分钟，29 个版本并行约 25 分钟。
+          for i in $(seq 1 120); do
+            RUNNING=0
+            for v in $(printf '%s' "$VERSIONS" | tr -d '[]"' | tr ',' ' '); do
+              [ -n "$v" ] || continue
+              # 该 tag 的 Release 还不存在就再等
+              if ! gh release view "v$v" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+                RUNNING=1
+                break
+              fi
+            done
+            if [ "$RUNNING" = "0" ]; then
+              echo "全部版本已发布"
+              break
+            fi
+            echo "[$i/120] 还有版本未发布，等待 30 秒"
+            sleep 30
+          done
+
+      - name: Set latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+
+          # 取所有已有 Release 的 tag，按语义版本排序，最大者设为 latest
+          ALL=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+                  --json tagName --jq '.[].tagName' \
+                | sed 's/^v//' | sort -u -V)
+
+          if [ -z "$ALL" ]; then
+            echo "没有 Release，跳过" 
+            exit 0
+          fi
+
+          NEWEST=$(printf '%s\n' "$ALL" | tail -1)
+          echo "最新版本: $NEWEST"
+
+          # gh release edit 的 --latest 会把标记从别的 Release 移过来
+          gh release edit "v$NEWEST" --repo "$GITHUB_REPOSITORY" --latest
+
+          {
+            echo "### Latest 标记"
+            echo ""
+            echo "已把 \`v$NEWEST\` 设为 latest"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # ================================================================ 汇总
   report:
-    needs: [discover, dispatch]
+    needs: [discover, dispatch, mark-latest]
     if: always()
     runs-on: ubuntu-latest
     steps:

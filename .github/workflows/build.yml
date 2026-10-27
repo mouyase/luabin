@@ -439,6 +439,13 @@ jobs:
           EOF
           cat notes.md
 
+      # make_latest 必须是 false。
+      #
+      # 默认 true 意味着每次发布都把 "Latest" 标记抢到刚发的那个版本上。
+      # nightly 会按版本号顺序批量构建，最后跑完的那个（往往不是最新版本）
+      # 就会占住 Latest，仓库首页显示的版本号因此是错的。
+      #
+      # 真正的 latest 由单独的 mark-latest job 在全部构建结束后设一次。
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.setup.outputs.version }}
@@ -447,3 +454,4 @@ jobs:
           body_path: notes.md
           generate_release_notes: false
           fail_on_unmatched_files: true
+          make_latest: false
